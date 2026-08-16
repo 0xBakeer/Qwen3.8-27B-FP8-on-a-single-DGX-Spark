@@ -27,19 +27,35 @@ RISC-V CPUs and models with non-causal attention. `config/speculative.py` even s
 speculation length *from* prefix-match length, i.e. the features are designed to
 cooperate. If you carry a note saying otherwise from an older version, re-check it.
 
-## 2. Speculative decoding does not change output
+## 2. Speculative decoding cannot force a token — but it does change the text
 
-Worth stating plainly because it governs how aggressively you can tune `k`. The drafter
-only *proposes*; the target model verifies every token and keeps a proposal only if it
-matches what it would have generated itself. First mismatch is discarded and replaced.
-At `temperature=0` output is identical; with sampling, rejection sampling preserves the
-target distribution.
+The drafter only *proposes*. The target model verifies every token and keeps a proposal
+only if it matches what it would have generated itself; the first mismatch is discarded
+and replaced. That guarantee holds, and it is why `k` cannot make the model dumber.
 
-So `k` is a pure speed/efficiency dial. Getting it wrong wastes drafting work — it cannot
-make the model dumber.
+**But "cannot force a token" is not the same as "identical output", and an earlier
+version of this file wrongly claimed the latter.** Measured on 20 prompts at
+`temperature=0`:
 
-Verified here: identical prompts produced byte-identical completions across
-configurations.
+| Comparison | Byte-identical |
+|---|---|
+| Same config, run twice | **20 / 20** |
+| Tuned vs stock | **8 / 20** |
+
+The engine is deterministic *within* a configuration. Across configurations the text
+diverges, because verifying eight tokens per pass instead of one changes the batch
+dimensions, which changes floating-point accumulation order, which flips the argmax
+wherever two candidate tokens are near-tied. Greedy decoding then follows a different
+branch for the rest of the completion.
+
+The same applies to any change of batch geometry — concurrency, `max_num_batched_tokens`,
+prefix caching, tensor-parallel degree. **Byte-reproducible output is not something a
+serving configuration can promise**, with or without speculation. `VLLM_BATCH_INVARIANT`
+exists if you need it, at a throughput cost.
+
+Full data, including all twelve divergences, in [EVAL.md](EVAL.md). The divergences are
+synonyms and formatting, not errors — but a diff cannot establish quality either way.
+That needs a scored eval, which is not in this repository yet.
 
 **Two real behavioural changes**, neither about quality:
 
@@ -101,14 +117,43 @@ accumulates in multi-turn conversations.
 
 Benchmarks that omit this are not measuring decode throughput.
 
-## 8. Suffix decoding is unavailable on modern vLLM
+## 8. Adaptive verification does not work with this model
+
+vLLM shipped adaptive verification in [PR #47808](https://github.com/vllm-project/vllm/pull/47808)
+(on `main`, tested here at `0.27.2rc1.dev122`). It varies the number of verified tokens per step from a learned
+confidence head, behaving like a long draft block at low concurrency and a short one at
+high concurrency — which is exactly the tradeoff §3 says you otherwise have to choose
+manually.
+
+**It cannot be used here:**
+
+```
+ValueError: Adaptive verification trims verification requests on device, which the
+GDNAttentionBackend attention backend does not support. Pass
+enable_adaptive_verification=false in the speculative config, or use a backend that does.
+```
+
+Qwen3.8-27B is hybrid — 48 GatedDeltaNet layers plus 16 full-attention — and those GDN
+layers require the GDN backend, so there is no backend to switch to. **The restriction is
+architectural, not hardware-specific:** this fails identically on any GPU. The published
+benchmarks for the feature use a model with MLA attention, which does support it.
+
+Two things worth knowing about the failure mode: it raises at KV-cache init, roughly six
+minutes into startup, so it is not free to test; and it fails **loudly** rather than
+silently falling back, which is the good outcome — a quiet fallback would look like
+"adaptive didn't help" rather than "adaptive never ran".
+
+Consequence: **`k` still has to be chosen by hand on this model**, per §3.
+
+## 9. Suffix decoding is unavailable on modern vLLM
 
 `suffix` appears in vLLM's speculative-method registry, but the implementation is gated
-behind `arctic-inference==0.1.1`, which ships source-only and pins `vllm==0.10.1`. On
+behind [`arctic-inference==0.1.1`](https://pypi.org/project/arctic-inference/0.1.1/), which
+ships source-only and pins `vllm==0.10.1`. On
 0.27.x it fails at config validation. It monkey-patches engine internals, so forcing the
 install is not advisable.
 
-## 9. SM121 quantization caveats
+## 10. SM121 quantization caveats
 
 Relevant when moving to 4-bit weights; documented in full in the companion 4-bit recipe.
 
@@ -117,7 +162,7 @@ Relevant when moving to 4-bit weights; documented in full in the companion 4-bit
 - CUTLASS FP4 kernels are reported to produce silent garbage on this architecture.
 - `VLLM_MARLIN_USE_ATOMIC_ADD=1` fixes a Marlin race condition that yields incorrect output.
 
-## 10. Idle engines cost memory, not bandwidth
+## 11. Idle engines cost memory, not bandwidth
 
 Co-resident but idle vLLM engines did not measurably slow decoding. Freeing them raised no
 throughput; it only enabled a larger `gpu-memory-utilization` and therefore a higher `k`.
