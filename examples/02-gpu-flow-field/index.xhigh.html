@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Curl-Noise GPU Flow Field — three.js</title>
+<!--
+  Target: three.js r160  (https://cdn.jsdelivr.net/npm/three@0.160.0)
+  Only current, non-deprecated APIs are used: WebGLRenderer, Scene,
+  PerspectiveCamera, OrthographicCamera, BufferGeometry, BufferAttribute,
+  ShaderMaterial, Points, AdditiveBlending. No addons, no build step.
+
+  PERFORMANCE NOTES (how this stays interactive with 200k particles):
+  - ONE draw call: all particles live in a single THREE.Points / BufferGeometry.
+  - ZERO per-frame CPU work on particles: attributes (seed + base position) are
+    uploaded once; positions, lifetime, respawn and advection are all computed
+    in the vertex shader from a single uTime uniform.
+  - Trajectories are integrated on the GPU with a fixed 8-step Euler loop
+    (const int STEPS below) — bounded cost per particle, no feedback textures.
+  - Curl is computed with forward finite differences that REUSE the centre
+    sample, so only 9 simplex evaluations per curl (not 18 for central diffs).
+  - Small soft points + additive blending + depth write off keep overdraw/fill
+    cost low while dense regions bloom.
+  - devicePixelRatio is capped at 2 to avoid 3x/4x overdraw on hi-dpi screens.
+  - antialias disabled (points are soft anyway), no shadows, no postprocessing.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #04050a; overflow: hidden; }
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #cdd6f4; }
+  #c { position: fixed; inset: 0; display: block; width: 100%; height: 100%; }
+
+  #ui {
+    position: fixed; top: 14px; left: 14px; z-index: 10;
+    background: rgba(10, 14, 24, 0.55);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(120, 150, 255, 0.18);
+    border-radius: 10px;
+    padding: 12px 14px; width: 236px;
+    user-select: none;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  }
+  #ui h1 { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; margin: 0 0 8px; color: #89b4ff; font-weight: 600; }
+  #fps { font-size: 22px; font-weight: 700; color: #eaf1ff; margin-bottom: 10px; }
+  #fps span { font-size: 11px; color: #7f8bb0; font-weight: 400; margin-left: 6px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; font-size: 11px; color: #aeb9d8; }
+  .row label { flex: 0 0 76px; }
+  .row input[type="range"] { flex: 1; accent-color: #4da3ff; height: 4px; cursor: pointer; }
+  .row .val { flex: 0 0 36px; text-align: right; color: #eaf1ff; }
+  .help { margin-top: 10px; font-size: 10px; color: #6f7ba0; line-height: 1.6; border-top: 1px solid rgba(120, 150, 255, 0.12); padding-top: 8px; }
+  .help b { color: #9fb2e6; font-weight: 600; }
+
+  #fallback { position: fixed; inset: 0; display: none; place-items: center; z-index: 20; background: #04050a; text-align: center; padding: 40px; }
+  #fallback h2 { color: #eaf1ff; }
+  #fallback p { color: #7f8bb0; }
+</style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <div id="ui">
+    <h1>Curl-Noise Flow</h1>
+    <div id="fps">--<span>FPS</span></div>
+    <div class="row">
+      <label>Noise scale</label>
+      <input id="scale" type="range" min="0.2" max="2.0" step="0.01" value="0.8" />
+      <span class="val" id="scaleV">0.80</span>
+    </div>
+    <div class="row">
+      <label>Flow speed</label>
+      <input id="speed" type="range" min="0.0" max="1.5" step="0.01" value="0.5" />
+      <span class="val" id="speedV">0.50</span>
+    </div>
+    <div class="row">
+      <label>Lifetime</label>
+      <input id="life" type="range" min="1.0" max="15.0" step="0.1" value="6.0" />
+      <span class="val" id="lifeV">6.0</span>
+    </div>
+    <div class="help">
+      <b>[</b>/<b>]</b> noise scale &nbsp; <b>,</b>/<b>.</b> flow speed &nbsp; <b>-</b>/<b>+</b> lifetime<br />
+      Move the mouse to push the field. 200,000 particles · 1 draw call.
+    </div>
+  </div>
+
+  <div id="fallback">
+    <div>
+      <h2>WebGL unavailable</h2>
+      <p>This demo requires WebGL and a network connection to load three.js from the CDN.</p>
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+    }
+  }
+  </script>
+
+  <script type="module">
+  import * as THREE from 'three';
+
+  // ---------------------------------------------------------------------------
+  // GLSL — background (dark gradient + centre glow + vignette)
+  // ---------------------------------------------------------------------------
+  const BG_VERT = /* glsl */`
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = vec4(position.xy, 0.0, 1.0);
+    }
+  `;
+
+  const BG_FRAG = /* glsl */`
+    precision highp float;
+    varying vec2 vUv;
+    uniform vec2 uResolution;
+    void main() {
+      vec2 p = vUv * 2.0 - 1.0;
+      p.x *= uResolution.x / max(1.0, uResolution.y);
+      float r = length(p);
+      // vertical gradient: not flat black
+      vec3 col = mix(vec3(0.010, 0.012, 0.020), vec3(0.045, 0.060, 0.100), vUv.y);
+      // subtle central glow so the field has something to sit in
+      col += vec3(0.050, 0.070, 0.120) * exp(-r * 1.6);
+      // vignette toward the edges
+      float vig = smoothstep(1.7, 0.35, r);
+      col *= 0.55 + 0.45 * vig;
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  // ---------------------------------------------------------------------------
+  // GLSL — particles
+  // ---------------------------------------------------------------------------
+  const VERT = /* glsl */`
+    uniform float uTime;
+    uniform float uLifetime;
+    uniform float uNoiseScale;
+    uniform float uFlowSpeed;
+    uniform float uSpawnRadius;
+    uniform float uPointBase;
+    uniform float uPixelRatio;
+    uniform vec3  uMouse;
+    uniform float uMouseStrength;
+    uniform float uMouseRadius;
+    uniform float uMousePush;
+
+    attribute float aSeed;
+
+    varying float vSpeed;
+    varying float vAge;
+
+    // --- 3D simplex noise ----------------------------------------------------
+    // Ashima Arts / Ian McEwan public-domain implementation, written inline.
+    vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+    vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+    vec4 permute(vec4 x) { return mod289(((x * 34.0) + 1.0) * x); }
+    vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+    float snoise(vec3 v) {
+      const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
+      const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+      vec3 i  = floor(v + dot(v, C.yyy));
+      vec3 x0 = v - i + dot(i, C.xxx);
+      vec3 g = step(x0.yzx, x0.xyz);
+      vec3 l = 1.0 - g;
+      vec3 i1 = min(g.xyz, l.zxy);
+      vec3 i2 = max(g.xyz, l.zxy);
+      vec3 x1 = x0 - i1 + C.xxx;
+      vec3 x2 = x0 - i2 + C.yyy;
+      vec3 x3 = x0 - D.yyy;
+      i = mod289(i);
+      vec4 p = permute(permute(permute(
+                i.z + vec4(0.0, i1.z, i2.z, 1.0))
+              + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+              + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+      float n_ = 0.142857142857;
+      vec3 ns = n_ * D.wyz - D.xzx;
+      vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+      vec4 x_ = floor(j * ns.z);
+      vec4 y_ = floor(j - 7.0 * x_);
+      vec4 x = x_ * ns.x + ns.yyyy;
+      vec4 y = y_ * ns.x + ns.yyyy;
+      vec4 h = 1.0 - abs(x) - abs(y);
+      vec4 b0 = vec4(x.xy, y.xy);
+      vec4 b1 = vec4(x.zw, y.zw);
+      vec4 s0 = floor(b0) * 2.0 + 1.0;
+      vec4 s1 = floor(b1) * 2.0 + 1.0;
+      vec4 sh = -step(h, vec4(0.0));
+      vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+      vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+      vec3 p0 = vec3(a0.xy, h.x);
+      vec3 p1 = vec3(a0.zw, h.y);
+      vec3 p2 = vec3(a1.xy, h.z);
+      vec3 p3 = vec3(a1.zw, h.w);
+      vec4 norm = taylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+      p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+      vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
+      m = m * m;
+      return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+    }
+
+    // --- vector potential: three independent scalar noise fields ------------
+    const vec3 OFF2 = vec3(123.4, 21.7, 87.5);
+    const vec3 OFF3 = vec3(397.1, 51.3, 11.9);
+
+    // curl of the potential via FORWARD finite differences.
+    //   v.x = dF3/dy - dF2/dz
+    //   v.y = dF1/dz - dF3/dx
+    //   v.z = dF2/dx - dF1/dy
+    // The centre sample (p) is shared, so this is exactly 9 snoise calls.
+    // A curl is divergence-free by construction, so particles swirl instead
+    // of piling into sinks. The field also drifts with time (t) so it evolves.
+    vec3 curlNoise(vec3 p, float t) {
+      p += vec3(t * 0.10, t * 0.06, -t * 0.08);
+      const float e = 0.15;
+      const float invE = 1.0 / e;
+
+      float F1p = snoise(p);
+      float F2p = snoise(p + OFF2);
+      float F3p = snoise(p + OFF3);
+
+      float F2x = snoise(p + vec3(e, 0.0, 0.0) + OFF2);
+      float F3x = snoise(p + vec3(e, 0.0, 0.0) + OFF3);
+      float F1y = snoise(p + vec3(0.0, e, 0.0));
+      float F3y = snoise(p + vec3(0.0, e, 0.0) + OFF3);
+      float F1z = snoise(p + vec3(0.0, 0.0, e));
+      float F2z = snoise(p + vec3(0.0, 0.0, e) + OFF2);
+
+      return vec3(
+        (F3y - F3p) * invE - (F2z - F2p) * invE,
+        (F1z - F1p) * invE - (F3x - F3p) * invE,
+        (F2x - F2p) * invE - (F1y - F1p) * invE
+      );
+    }
+
+    // Full velocity field: curl-noise advection + cursor repulsion.
+    vec3 velocityField(vec3 p, float t) {
+      vec3 c = curlNoise(p * uNoiseScale, t) * uFlowSpeed;
+      vec3 toP = p - uMouse;
+      float len = length(toP);
+      float infl = exp(-(len * len) / (uMouseRadius * uMouseRadius));
+      vec3 push = (toP / max(len, 1e-3)) * infl * uMouseStrength;
+      return c + push;
+    }
+
+    // --- per-cycle spawn hashing (deterministic, all on the GPU) ------------
+    float hash13(vec3 q) {
+      q = fract(q * 0.1031);
+      q += dot(q, q.zyx + 31.32);
+      return fract((q.x + q.y) * q.z);
+    }
+
+    // Uniform point inside a ball of radius uSpawnRadius.
+    vec3 spawnPosition(float seed, float cycle) {
+      float a  = hash13(vec3(seed, cycle, 1.7)) * 6.28318530718;
+      float u  = hash13(vec3(seed, cycle, 2.3)) * 2.0 - 1.0;
+      float r2 = sqrt(max(0.0, 1.0 - u * u));
+      vec3 dir = vec3(cos(a) * r2, sin(a) * r2, u);
+      float rad = pow(hash13(vec3(seed, cycle, 3.9)), 1.0 / 3.0) * uSpawnRadius;
+      return dir * rad;
+    }
+
+    const int STEPS = 8;   // Euler substeps per frame; the whole life is
+                           // re-integrated each frame, so more = smoother path,
+                           // higher GPU cost. 8 is the quality/cost sweet spot.
+
+    void main() {
+      // lifetime + respawn, driven only by uTime and the per-particle seed.
+      float lifeT = uTime / uLifetime;
+      float cycle = floor(lifeT + aSeed);
+      float age01 = (lifeT + aSeed) - cycle;      // 0..1 through this life
+      float age   = age01 * uLifetime;            // seconds alive
+
+      // each cycle the particle is born at a fresh hashed position
+      vec3 pos = spawnPosition(aSeed, cycle);
+
+      // advect through the flow field from birth up to "now"
+      float t0 = uTime - age;                     // absolute time at birth
+      float dt = age / float(STEPS);
+      vec3 vel = vec3(0.0);
+      for (int i = 0; i < STEPS; i++) {
+        float t = t0 + (float(i) + 1.0) * dt;
+        vel = velocityField(pos, t);
+        pos += vel * dt;
+      }
+
+      // immediate radial displacement so the cursor push reads instantly
+      vec3 toM = pos - uMouse;
+      float lm = length(toM);
+      float infl = exp(-(lm * lm) / (uMouseRadius * uMouseRadius));
+      pos += (toM / max(lm, 1e-3)) * infl * uMousePush;
+
+      vSpeed = length(vel);
+      vAge   = age01;
+
+      vec4 mv = modelViewMatrix * vec4(pos, 1.0);
+      gl_Position = projectionMatrix * mv;
+
+      // perspective-attenuated point size, in device pixels
+      float ps = uPointBase * uPixelRatio * (300.0 / max(0.1, -mv.z));
+      gl_PointSize = clamp(ps, 1.0, 60.0 * uPixelRatio);
+    }
+  `;
+
+  const FRAG = /* glsl */`
+    precision highp float;
+    uniform float uSpeedMax;
+    varying float vSpeed;
+    varying float vAge;
+
+    // speed -> colour ramp: slow = deep blue, fast = hot gold/white
+    vec3 palette(float t) {
+      vec3 c1 = vec3(0.05, 0.10, 0.45);
+      vec3 c2 = vec3(0.10, 0.55, 0.90);
+      vec3 c3 = vec3(0.15, 0.90, 0.95);
+      vec3 c4 = vec3(1.00, 0.88, 0.60);
+      if (t < 0.35) return mix(c1, c2, t / 0.35);
+      if (t < 0.70) return mix(c2, c3, (t - 0.35) / 0.35);
+      return mix(c3, c4, (t - 0.70) / 0.30);
+    }
+
+    void main() {
+      // procedural soft round sprite (no texture): discard outside the disc
+      vec2 uv = gl_PointCoord - 0.5;
+      float d = length(uv);
+      if (d > 0.5) discard;
+      float a = 1.0 - smoothstep(0.0, 0.5, d);
+      a = pow(a, 1.6);                              // fade toward the edge
+
+      float t = clamp(vSpeed / uSpeedMax, 0.0, 1.0);
+      t = pow(t, 0.85);
+      vec3 col = palette(t);
+
+      // fade in on spawn, fade out near death (no popping)
+      float life = smoothstep(0.0, 0.12, vAge) * (1.0 - smoothstep(0.80, 1.0, vAge));
+
+      // faster particles are brighter (hotter); AdditiveBlending scales rgb by a
+      float intensity = a * life * (0.35 + 0.65 * t);
+      gl_FragColor = vec4(col, intensity);
+    }
+  `;
+
+  // ---------------------------------------------------------------------------
+  // Setup
+  // ---------------------------------------------------------------------------
+  const COUNT = 200000;
+
+  const canvas = document.getElementById('c');
+  const fallback = document.getElementById('fallback');
+
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: false,
+      powerPreference: 'high-performance',
+    });
+  } catch (err) {
+    fallback.style.display = 'grid';
+    throw err;
+  }
+  renderer.autoClear = false;
+
+  let dpr = Math.min(window.devicePixelRatio || 1, 2);
+  renderer.setPixelRatio(dpr);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
+
+  // background pass (fullscreen quad in its own ortho scene)
+  const bgScene = new THREE.Scene();
+  const bgCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const bgUniforms = {
+    uResolution: { value: new THREE.Vector2(window.innerWidth * dpr, window.innerHeight * dpr) },
+  };
+  const bgMat = new THREE.ShaderMaterial({
+    uniforms: bgUniforms,
+    vertexShader: BG_VERT,
+    fragmentShader: BG_FRAG,
+    depthTest: false,
+    depthWrite: false,
+  });
+  bgScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), bgMat));
+
+  // ---------------------------------------------------------------------------
+  // Particles — one BufferGeometry, one Points, one draw call
+  // ---------------------------------------------------------------------------
+  const uniforms = {
+    uTime:          { value: 0 },
+    uLifetime:      { value: 6.0 },
+    uNoiseScale:    { value: 0.8 },
+    uFlowSpeed:     { value: 0.5 },
+    uSpawnRadius:   { value: 2.4 },
+    uPointBase:     { value: 0.05 },
+    uPixelRatio:    { value: dpr },
+    uMouse:         { value: new THREE.Vector3(9999, 9999, 9999) },
+    uMouseStrength: { value: 1.2 },
+    uMouseRadius:   { value: 1.0 },
+    uMousePush:     { value: 0.4 },
+    uSpeedMax:      { value: 0.9 },
+  };
+
+  const geometry = new THREE.BufferGeometry();
+  const basePos = new Float32Array(COUNT * 3);
+  const seeds = new Float32Array(COUNT);
+  for (let i = 0; i < COUNT; i++) {
+    // valid base positions (uniform in a ball); the vertex shader recomputes
+    // the live position from the seed every frame, but the attribute keeps the
+    // geometry well-formed and gives a sane fallback silhouette.
+    const a = Math.random() * Math.PI * 2;
+    const u = Math.random() * 2 - 1;
+    const r = Math.cbrt(Math.random()) * 2.4;
+    const r2 = Math.sqrt(1 - u * u);
+    basePos[i * 3]     = Math.cos(a) * r2 * r;
+    basePos[i * 3 + 1] = Math.sin(a) * r2 * r;
+    basePos[i * 3 + 2] = u * r;
+    seeds[i] = Math.random();
+  }
+  geometry.setAttribute('position', new THREE.BufferAttribute(basePos, 3));
+  geometry.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1));
+
+  const material = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: VERT,
+    fragmentShader: FRAG,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+
+  const points = new THREE.Points(geometry, material);
+  // live positions come from the shader, so disable culling (the static
+  // bounding sphere would otherwise cull the whole cloud off-screen)
+  points.frustumCulled = false;
+  scene.add(points);
+
+  // ---------------------------------------------------------------------------
+  // Mouse -> world-space point (plane through the origin facing the camera)
+  // ---------------------------------------------------------------------------
+  const mouseNDC = new THREE.Vector2(0, 0);
+  const mouseWorld = new THREE.Vector3(9999, 9999, 9999);
+  const tmpV = new THREE.Vector3();
+  let mouseActive = false;
+
+  window.addEventListener('pointermove', (e) => {
+    mouseNDC.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouseNDC.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    mouseActive = true;
+  });
+  window.addEventListener('pointerleave', () => { mouseActive = false; });
+  window.addEventListener('blur', () => { mouseActive = false; });
+
+  // ---------------------------------------------------------------------------
+  // Controls (sliders + keyboard) for noise scale, flow speed, lifetime
+  // ---------------------------------------------------------------------------
+  const params = { noiseScale: 0.8, flowSpeed: 0.5, lifetime: 6.0 };
+
+  const fpsEl = document.getElementById('fps');
+  const scaleEl = document.getElementById('scale');
+  const speedEl = document.getElementById('speed');
+  const lifeEl = document.getElementById('life');
+  const scaleV = document.getElementById('scaleV');
+  const speedV = document.getElementById('speedV');
+  const lifeV = document.getElementById('lifeV');
+
+  const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+
+  function refresh() {
+    uniforms.uNoiseScale.value = params.noiseScale;
+    uniforms.uFlowSpeed.value = params.flowSpeed;
+    uniforms.uLifetime.value = params.lifetime;
+    scaleEl.value = params.noiseScale;
+    speedEl.value = params.flowSpeed;
+    lifeEl.value = params.lifetime;
+    scaleV.textContent = params.noiseScale.toFixed(2);
+    speedV.textContent = params.flowSpeed.toFixed(2);
+    lifeV.textContent = params.lifetime.toFixed(1);
+  }
+
+  scaleEl.addEventListener('input', (e) => { params.noiseScale = +e.target.value; refresh(); });
+  speedEl.addEventListener('input', (e) => { params.flowSpeed = +e.target.value; refresh(); });
+  lifeEl.addEventListener('input', (e) => { params.lifetime = +e.target.value; refresh(); });
+
+  window.addEventListener('keydown', (e) => {
+    let handled = true;
+    switch (e.key) {
+      case '[': params.noiseScale = clamp(params.noiseScale - 0.05, 0.2, 2.0); break;
+      case ']': params.noiseScale = clamp(params.noiseScale + 0.05, 0.2, 2.0); break;
+      case ',': params.flowSpeed = clamp(params.flowSpeed - 0.05, 0.0, 1.5); break;
+      case '.': params.flowSpeed = clamp(params.flowSpeed + 0.05, 0.0, 1.5); break;
+      case '-': params.lifetime = clamp(params.lifetime - 0.5, 1.0, 15.0); break;
+      case '+': params.lifetime = clamp(params.lifetime + 0.5, 1.0, 15.0); break;
+      default: handled = false;
+    }
+    if (handled) refresh();
+  });
+
+  refresh();
+
+  // ---------------------------------------------------------------------------
+  // Resize (with device pixel ratio)
+  // ---------------------------------------------------------------------------
+  function onResize() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    renderer.setPixelRatio(dpr);
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    uniforms.uPixelRatio.value = dpr;
+    bgUniforms.uResolution.value.set(w * dpr, h * dpr);
+  }
+  window.addEventListener('resize', onResize);
+  onResize();
+
+  // ---------------------------------------------------------------------------
+  // Render loop: auto-orbiting camera, mouse projection, FPS counter
+  // ---------------------------------------------------------------------------
+  const clock = new THREE.Clock();
+  let frames = 0;
+  let fpsT = performance.now();
+
+  function loop(now) {
+    requestAnimationFrame(loop);
+
+    const t = clock.getElapsedTime();
+    uniforms.uTime.value = t;
+
+    // slow autonomous orbit (with a gentle vertical bob) around the field
+    const a = t * 0.07;
+    camera.position.set(
+      Math.cos(a) * 6.5,
+      Math.sin(a * 0.6) * 1.4 + 0.4,
+      Math.sin(a) * 6.5
+    );
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+
+    // project the cursor onto a plane through the origin facing the camera
+    if (mouseActive) {
+      tmpV.set(mouseNDC.x, mouseNDC.y, 0.5).unproject(camera);
+      const dir = tmpV.sub(camera.position).normalize();
+      const dist = camera.position.length();
+      mouseWorld.copy(camera.position).addScaledVector(dir, dist);
+      uniforms.uMouse.value.copy(mouseWorld);
+    } else {
+      uniforms.uMouse.value.set(9999, 9999, 9999);
+    }
+
+    // self-rolled FPS counter (frames per ~500ms window)
+    frames++;
+    if (now - fpsT >= 500) {
+      fpsEl.firstChild.nodeValue = String(Math.round((frames * 1000) / (now - fpsT)));
+      frames = 0;
+      fpsT = now;
+    }
+
+    // two passes: background quad, then particles on top
+    renderer.clear();
+    renderer.render(bgScene, bgCamera);
+    renderer.render(scene, camera);
+  }
+  requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

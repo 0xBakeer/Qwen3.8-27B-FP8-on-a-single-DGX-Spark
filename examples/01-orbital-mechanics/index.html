@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<!--
+  N-body orbital mechanics simulation — single self-contained file.
+
+  three.js version targeted: 0.185.1 (r185), loaded from CDN via ES module import map.
+  No deprecated APIs are used (no THREE.Geometry, no useLegacyLights, etc.).
+
+  Physics:
+    - Full pairwise Newtonian gravity: every body attracts every other body.
+    - Integrator: velocity Verlet (leapfrog), symplectic, 2nd order.
+    - Fixed physics timestep DT = 0.005 sim-days (sub-stepped per render frame
+      to stay stable at 10x speed; DT is ~400x smaller than the fastest
+      orbital period, so total energy drift is negligible).
+    - Plummer softening: a_i = sum_j G*m_j*(r_j-r_i) / (|dr|^2 + EPS^2)^(3/2)
+    - Initial tangential velocities from v = sqrt(G*M/r) (near-circular orbits);
+      one body ("Wander") is seeded at 0.6x that speed for a visible ellipse.
+  Units: G = 1, time in "days". Speed slider: 0 = paused, 1 = 1 day/sec, 10 = 10 days/sec.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>N-Body Orbital Mechanics</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+  canvas { display: block; }
+  .panel {
+    position: fixed; z-index: 10; color: #cfd8e3;
+    font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: rgba(10, 14, 20, 0.72);
+    border: 1px solid rgba(120, 150, 190, 0.25);
+    border-radius: 8px; padding: 10px 12px;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    user-select: none;
+  }
+  #readout { top: 12px; left: 12px; min-width: 250px; }
+  #readout .value, #speedLabel { color: #eaf6ff; font-variant-numeric: tabular-nums; }
+  #hint { top: 12px; right: 12px; text-align: right; opacity: 0.75; }
+  #focus { top: 118px; left: 12px; display: none; }
+  #bar { bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 12px; align-items: center; white-space: nowrap; }
+  input[type=range] { width: 220px; accent-color: #5aa7ff; }
+  button {
+    font: inherit; color: #eaf6ff; background: #1b2836;
+    border: 1px solid rgba(120, 150, 190, 0.35); border-radius: 6px;
+    padding: 5px 14px; cursor: pointer;
+  }
+  button:hover { background: #243447; }
+  .label { opacity: 0.8; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="readout" class="panel">
+  <div>t  = <span id="time" class="value">0.0</span> d</div>
+  <div>E  = <span id="energy" class="value">&mdash;</span> <span class="label">(kinetic + potential)</span></div>
+  <div>&Delta;E/E&sub0; = <span id="drift" class="value">&mdash;</span></div>
+</div>
+
+<div id="hint" class="panel">drag: rotate &middot; scroll: zoom<br/>click a body: focus<br/>click empty space: release</div>
+
+<div id="focus" class="panel">focusing <span id="focusName" class="value"></span> &mdash; click empty space to release</div>
+
+<div id="bar" class="panel">
+  <span class="label">speed</span>
+  <input id="speed" type="range" min="0" max="10" step="0.05" value="1" />
+  <span id="speedLabel" style="min-width: 56px">&times;1.00</span>
+  <button id="reset">reset</button>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+/* ============================== physics ============================== */
+
+const G = 1.0;            // gravitational constant (simulation units)
+const DT = 0.005;         // fixed velocity-Verlet timestep, in sim-days
+const EPS2 = 0.25;        // Plummer softening length squared (0.5^2)
+const BASE_RATE = 1.0;    // sim-days advanced per real second at slider = 1
+
+// Central star + 5 near-circular planets + 1 deliberately eccentric body.
+// vF = 1.0  -> v = sqrt(G*M/r)  (stable circular orbit)
+// vF = 0.6  -> under-circular speed at that radius -> visible ellipse
+const SPEC = [
+  { name: 'Helion', mass: 2000, color: 0xffc866, r: 0,  vF: 1.0, theta: 0.0, star: true },
+  { name: 'Cinder', mass: 5,    color: 0xff5533, r: 20, vF: 1.0, theta: 0.4 },
+  { name: 'Terra',  mass: 8,    color: 0x3d9bff, r: 34, vF: 1.0, theta: 2.1 },
+  { name: 'Jovia',  mass: 10,   color: 0xffb03a, r: 48, vF: 1.0, theta: 4.0 },
+  { name: 'Gale',   mass: 4,    color: 0x59ffc8, r: 66, vF: 1.0, theta: 5.2 },
+  { name: 'Krios',  mass: 6,    color: 0x9d7bff, r: 86, vF: 1.0, theta: 1.2 },
+  { name: 'Wander', mass: 2,    color: 0xff3da6, r: 60, vF: 0.6, theta: 3.3 },
+];
+
+const bodies = [];
+let E0 = 0;       // total energy at t = 0 (reference for the drift readout)
+let simTime = 0;  // elapsed simulation time, in sim-days
+
+// Pairwise gravitational accelerations, written into body[dst] (dst = 'acc' or 'acc2').
+function computeAccels(dst) {
+  for (const b of bodies) b[dst].set(0, 0, 0);
+  for (let i = 0; i < bodies.length; i++) {
+    const bi = bodies[i];
+    for (let j = i + 1; j < bodies.length; j++) {
+      const bj = bodies[j];
+      const dx = bj.pos.x - bi.pos.x;
+      const dy = bj.pos.y - bi.pos.y;
+      const dz = bj.pos.z - bi.pos.z;
+      const d2 = dx * dx + dy * dy + dz * dz + EPS2;
+      const inv = 1 / Math.sqrt(d2);
+      const f = G * inv * inv * inv;   // G / (|dr|^2 + EPS2)^(3/2)
+      const fi = f * bj.mass;
+      const fj = f * bi.mass;
+      const ai = bi[dst], aj = bj[dst];
+      ai.x += dx * fi; ai.y += dy * fi; ai.z += dz * fi;
+      aj.x -= dx * fj; aj.y -= dy * fj; aj.z -= dz * fj;
+    }
+  }
+}
+
+// One velocity-Verlet step of size h:
+//   r(t+h) = r + v*h + 1/2 a h^2
+//   v(t+h) = v + 1/2 (a(t) + a(t+h)) h
+function stepVerlet(h) {
+  const h2 = 0.5 * h * h;
+  for (const b of bodies)
+    b.pos.addScaledVector(b.vel, h).addScaledVector(b.acc, h2);
+  computeAccels('acc2');
+  for (const b of bodies)
+    b.vel.addScaledVector(b.acc, 0.5 * h).addScaledVector(b.acc2, 0.5 * h);
+  for (const b of bodies) b.acc.copy(b.acc2);
+}
+
+// Total mechanical energy: KE + PE (softened pairwise potential).
+function totalEnergy() {
+  let ke = 0, pe = 0;
+  for (const b of bodies)
+    ke += 0.5 * b.mass * (b.vel.x * b.vel.x + b.vel.y * b.vel.y + b.vel.z * b.vel.z);
+  for (let i = 0; i < bodies.length; i++)
+    for (let j = i + 1; j < bodies.length; j++) {
+      const bi = bodies[i], bj = bodies[j];
+      const dx = bj.pos.x - bi.pos.x, dy = bj.pos.y - bi.pos.y, dz = bj.pos.z - bi.pos.z;
+      pe -= G * bi.mass * bj.mass / Math.sqrt(dx * dx + dy * dy + dz * dz + EPS2);
+    }
+  return ke + pe;
+}
+
+/* ============================== scene ============================== */
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x02030a);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 6000);
+const INIT_CAM = new THREE.Vector3(0, 72, 128);
+camera.position.copy(INIT_CAM);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 3;
+controls.maxDistance = 900;
+
+// Point light lives at the star (updated each frame as it wobbles).
+const starLight = new THREE.PointLight(0xfff1d6, 2500, 0, 2);
+scene.add(starLight);
+// Ambient fill so night sides of planets are not pure black.
+scene.add(new THREE.AmbientLight(0x8899bb, 0.4));
+
+// Starfield: random points on a large spherical shell, static, never rebuilt.
+{
+  const N = 3500;
+  const pos = new Float32Array(N * 3);
+  const col = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const u = Math.random() * 2 - 1;
+    const ph = Math.random() * Math.PI * 2;
+    const s = Math.sqrt(1 - u * u);
+    const R = 900 + Math.random() * 1500;
+    pos[i * 3]     = s * Math.cos(ph) * R;
+    pos[i * 3 + 1] = u * R;
+    pos[i * 3 + 2] = s * Math.sin(ph) * R;
+    const b = 0.35 + Math.random() * 0.65;   // random brightness
+    const warm = Math.random();              // slight warm/cool tint
+    col[i * 3]     = b * (1 - 0.15 * warm);
+    col[i * 3 + 1] = b * (1 - 0.05 * warm);
+    col[i * 3 + 2] = b * (1 + 0.15 * (warm - 0.5));
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const mat = new THREE.PointsMaterial({
+    size: 1.6, sizeAttenuation: false, vertexColors: true,
+    transparent: true, opacity: 0.9, depthWrite: false,
+  });
+  scene.add(new THREE.Points(geo, mat));
+}
+
+/* ============================== bodies ============================== */
+
+const UNIT_SPHERE = new THREE.SphereGeometry(1, 32, 24);
+const TRAIL_LEN = 800; // trail ring-buffer capacity (points), ~13 s at 60 fps
+const TRAIL_MAT = new THREE.LineBasicMaterial({
+  vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false,
+});
+
+function makeTrail(colorHex) {
+  const positions = new Float32Array(TRAIL_LEN * 3);
+  const colors = new Float32Array(TRAIL_LEN * 3);
+  const c = new THREE.Color(colorHex);
+  // Static index-anchored gradient: index 0 is always the newest point (brightest).
+  for (let i = 0; i < TRAIL_LEN; i++) {
+    const f = Math.pow(1 - i / (TRAIL_LEN - 1), 1.6);
+    colors[i * 3] = c.r * f;
+    colors[i * 3 + 1] = c.g * f;
+    colors[i * 3 + 2] = c.b * f;
+  }
+  const geo = new THREE.BufferGeometry();
+  const attr = new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute('position', attr);
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const line = new THREE.Line(geo, TRAIL_MAT);
+  line.frustumCulled = false; // positions move every frame; skip stale bounds checks
+  scene.add(line);
+  return { positions, attr, line };
+}
+
+// Efficient trail update: O(n) in-place memmove of the existing buffer,
+// one new head point written, GPU buffer re-uploaded. Never rebuilt.
+function pushTrail(b) {
+  const p = b.trail.positions;
+  p.copyWithin(0, 3);
+  p[0] = b.pos.x; p[1] = b.pos.y; p[2] = b.pos.z;
+  b.trail.attr.needsUpdate = true;
+}
+
+function fillTrail(b) {
+  const p = b.trail.positions;
+  for (let i = 0; i < TRAIL_LEN; i++) {
+    p[i * 3] = b.pos.x; p[i * 3 + 1] = b.pos.y; p[i * 3 + 2] = b.pos.z;
+  }
+  b.trail.attr.needsUpdate = true;
+}
+
+function buildBodies() {
+  const star = SPEC[0];
+  const starMass = star.mass;
+  const momentum = new THREE.Vector3();
+
+  for (const s of SPEC) {
+    const pos = new THREE.Vector3();
+    const vel = new THREE.Vector3();
+    if (!s.star) {
+      const r = s.r, th = s.theta;
+      pos.set(r * Math.cos(th), 0, r * Math.sin(th));
+      // Circular-orbit speed from v = sqrt(G*M/r); tangent to the orbit.
+      const v = s.vF * Math.sqrt(G * starMass / r);
+      vel.set(-Math.sin(th) * v, 0, Math.cos(th) * v);
+      momentum.addScaledVector(vel, s.mass);
+    }
+    const dispR = s.star ? 4.5 : 1.1 * Math.cbrt(s.mass / 5); // visual size ~ cbrt(mass)
+    const mat = new THREE.MeshStandardMaterial({
+      color: s.color,
+      emissive: s.color,
+      emissiveIntensity: s.star ? 1.5 : 0.45,
+      roughness: s.star ? 0.4 : 0.55,
+      metalness: 0.05,
+    });
+    const mesh = new THREE.Mesh(UNIT_SPHERE, mat);
+    mesh.scale.setScalar(dispR);
+    mesh.position.copy(pos);
+    mesh.userData.body = {
+      spec: s, mass: s.mass, dispR, mesh,
+      pos, vel,
+      acc: new THREE.Vector3(), acc2: new THREE.Vector3(),
+      initPos: null, initVel: null, initAcc: null,
+      trail: null,
+    };
+    scene.add(mesh);
+    bodies.push(mesh.userData.body);
+  }
+
+  // Counter-velocity so total system momentum is zero (star recoils slightly).
+  bodies[0].vel.copy(momentum).divideScalar(-starMass);
+
+  computeAccels('acc');
+  for (const b of bodies) {
+    b.initPos = b.pos.clone();
+    b.initVel = b.vel.clone();
+    b.initAcc = b.acc.clone();
+    b.trail = makeTrail(b.spec.color);
+    fillTrail(b);
+  }
+  starLight.position.copy(bodies[0].pos);
+}
+
+buildBodies();
+E0 = totalEnergy();
+
+/* ============================== interaction ============================== */
+
+const speedInput = document.getElementById('speed');
+const speedLabel = document.getElementById('speedLabel');
+let speed = parseFloat(speedInput.value);
+
+function updateSpeedLabel() {
+  speedLabel.textContent = speed === 0 ? 'paused' : '\u00d7' + speed.toFixed(2);
+}
+speedInput.addEventListener('input', () => {
+  speed = parseFloat(speedInput.value);
+  updateSpeedLabel();
+});
+updateSpeedLabel();
+
+const timeEl = document.getElementById('time');
+const energyEl = document.getElementById('energy');
+const driftEl = document.getElementById('drift');
+const focusEl = document.getElementById('focus');
+const focusNameEl = document.getElementById('focusName');
+
+// Camera focus / follow state.
+let follow = null;
+let focusTransition = 0;
+const followPrev = new THREE.Vector3();
+const desiredOffset = new THREE.Vector3();
+const T1 = new THREE.Vector3();
+const T2 = new THREE.Vector3();
+
+function setFocus(b) {
+  follow = b;
+  followPrev.copy(b.pos);
+  T1.copy(camera.position).sub(b.pos);
+  if (T1.lengthSq() < 1e-8) T1.set(0, 0.4, 1);
+  T1.normalize();
+  const dist = THREE.MathUtils.clamp(b.dispR * 10, 8, 400);
+  desiredOffset.copy(T1).multiplyScalar(dist);
+  controls.target.copy(b.pos);   // snap the orbit pivot onto the body
+  focusTransition = 1;           // glide the camera in over ~1 s
+  focusNameEl.textContent = b.spec.name;
+  focusEl.style.display = 'block';
+}
+
+function clearFocus() {
+  follow = null;
+  focusEl.style.display = 'none';
+}
+
+// Click (not drag) detection + raycast against body meshes.
+const raycaster = new THREE.Raycaster();
+const mouseNdc = new THREE.Vector2();
+let downX = 0, downY = 0;
+
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  downX = e.clientX; downY = e.clientY;
+});
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (e.button !== 0) return;
+  if (Math.hypot(e.clientX - downX, e.clientY - downY) > 5) return; // it was a drag
+  mouseNdc.x = (e.clientX / innerWidth) * 2 - 1;
+  mouseNdc.y = -(e.clientY / innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouseNdc, camera);
+  const meshes = bodies.map((b) => b.mesh);
+  const hits = raycaster.intersectObjects(meshes, false);
+  if (hits.length > 0) setFocus(hits[0].object.userData.body);
+  else clearFocus();
+});
+
+function reset() {
+  simTime = 0;
+  for (const b of bodies) {
+    b.pos.copy(b.initPos);
+    b.vel.copy(b.initVel);
+    b.acc.copy(b.initAcc);
+    fillTrail(b);
+  }
+  clearFocus();
+  camera.position.copy(INIT_CAM);
+  controls.target.set(0, 0, 0);
+  E0 = totalEnergy();
+}
+document.getElementById('reset').addEventListener('click', reset);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ============================== main loop ============================== */
+
+let last = performance.now();
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dtReal = Math.min((now - last) / 1000, 0.05); // clamp huge frame gaps
+  last = now;
+
+  // Sub-step the fixed Verlet timestep so speed scales up to 10x real time.
+  const rate = speed * BASE_RATE;
+  const advance = rate * dtReal;
+  if (advance > 0) {
+    const n = Math.ceil(advance / DT);
+    const h = advance / n;
+    for (let i = 0; i < n; i++) stepVerlet(h);
+    simTime += advance;
+    for (const b of bodies) pushTrail(b);
+  }
+
+  // Sync visuals.
+  const star = bodies[0];
+  for (const b of bodies) b.mesh.position.copy(b.pos);
+  starLight.position.copy(star.pos);
+
+  // Camera follow: shift camera + pivot by the body's per-frame displacement,
+  // then (right after focusing) glide toward a comfortable viewing distance.
+  if (follow) {
+    T1.copy(follow.pos).sub(followPrev);
+    followPrev.copy(follow.pos);
+    camera.position.add(T1);
+    controls.target.add(T1);
+    if (focusTransition > 0) {
+      focusTransition = Math.max(0, focusTransition - dtReal / 1.0);
+      T2.copy(controls.target).add(desiredOffset);
+      camera.position.lerp(T2, 0.08);
+    }
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+
+  // HUD readout.
+  timeEl.textContent = simTime.toFixed(1);
+  const E = totalEnergy();
+  energyEl.textContent = E.toFixed(2);
+  driftEl.textContent = ((E - E0) / Math.abs(E0) * 100).toExponential(2) + ' %';
+}
+requestAnimationFrame(frame);
+
+// Small debug/inspection hook (harmless in production).
+window.__nbody = {
+  get t() { return simTime; },
+  get E() { return totalEnergy(); },
+  get E0() { return E0; },
+  get following() { return follow ? follow.spec.name : null; },
+  get cameraPos() { return camera.position.toArray(); },
+  get target() { return controls.target.toArray(); },
+  bodyPos: (name) => {
+    const b = bodies.find((x) => x.spec.name === name);
+    return b ? b.pos.toArray() : null;
+  },
+  starDist: (name) => {
+    const b = bodies.find((x) => x.spec.name === name);
+    return b ? b.pos.distanceTo(bodies[0].pos) : null;
+  },
+  focus: (name) => {
+    const b = bodies.find((x) => x.spec.name === name);
+    if (b) setFocus(b);
+  },
+  reset,
+};
+</script>
+</body>
+</html>

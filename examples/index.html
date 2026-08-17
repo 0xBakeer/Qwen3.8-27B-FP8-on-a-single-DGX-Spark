@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwen3.8-27B-FP8 — three.js examples</title>
+<style>
+  :root {
+    --bg: #1c242d;
+    --card: #232c37;
+    --line: #313c49;
+    --ink: #eef2f7;
+    --ink-2: #93a1b3;
+    --accent: #3987e5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 56px 22px 80px;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  .eyebrow {
+    font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--ink-2); margin: 0 0 10px;
+  }
+  h1 {
+    font-size: 26px; line-height: 1.2; margin: 0 0 12px; letter-spacing: -0.4px;
+  }
+  h1 span { color: var(--accent); }
+  .intro { color: var(--ink-2); font-size: 14.5px; margin: 0 0 34px; }
+  .intro a { color: var(--accent); }
+  ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+  a.card {
+    display: block; padding: 18px 20px; text-decoration: none;
+    background: var(--card); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent); border-radius: 8px;
+    color: var(--ink); transition: border-color .15s, transform .15s;
+  }
+  a.card:hover, a.card:focus-visible {
+    border-color: var(--accent); transform: translateX(2px); outline: none;
+  }
+  a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .n { font-size: 11px; letter-spacing: 0.14em; color: var(--ink-2); }
+  .t { font-size: 17px; margin: 6px 0 4px; }
+  .d { font-size: 13.5px; color: var(--ink-2); line-height: 1.5; }
+  li.gone .card-off {
+    display: block; padding: 18px 20px; background: var(--card);
+    border: 1px dashed var(--line); border-radius: 8px; opacity: .55;
+  }
+  footer {
+    margin-top: 38px; padding-top: 18px; border-top: 1px solid var(--line);
+    font-size: 13px; color: var(--ink-2);
+  }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">Generated locally · one DGX Spark</p>
+  <h1>three.js examples — <span>Qwen3.8-27B-FP8</span></h1>
+  <p class="intro">
+    Each simulation is a single self-contained HTML file written by Qwen3.8-27B
+    running on one DGX Spark, from the <code>PROMPT.md</code> beside it. The
+    <a href="https://github.com/0xBakeer/Qwen3.8-27B-4-bit-on-a-single-DGX-Spark/tree/main/examples">4-bit repository</a>
+    contains the same three prompts, so the outputs can be compared directly.
+  </p>
+
+  <ul>
+    <li>
+      <a class="card" href="01-orbital-mechanics/">
+        <div class="n">01</div>
+        <div class="t">Orbital mechanics</div>
+        <div class="d">N-body gravity with velocity Verlet integration. The energy
+          readout is the correctness check — it should stay roughly constant.</div>
+      </a>
+    </li>
+    <li>
+      <a class="card" href="02-gpu-flow-field/">
+        <div class="n">02</div>
+        <div class="t">GPU flow field</div>
+        <div class="d">200,000 particles in one draw call, driven by curl noise
+          computed in a hand-written GLSL shader.</div>
+      </a>
+    </li>
+    <li class="gone">
+      <div class="card-off">
+        <div class="n">03</div>
+        <div class="t">Double pendulum</div>
+        <div class="d">Not generated in this variant — see the 4-bit repository.
+          The prompt is here for reference.</div>
+      </div>
+    </li>
+  </ul>
+
+  <footer>
+    Prompts and serving recipe:
+    <a href="https://github.com/0xBakeer/Qwen3.8-27B-FP8-on-a-single-DGX-Spark">repository</a>
+  </footer>
+</main>
+</body>
+</html>

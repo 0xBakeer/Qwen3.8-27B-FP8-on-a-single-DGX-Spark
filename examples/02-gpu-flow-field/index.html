@@ -1,0 +1,535 @@
+<!doctype html>
+<!--
+  GPU Curl-Noise Flow Field
+  ----------------------------------------------------------------
+  Single self-contained file. No build step, no bundler, no local deps.
+  three.js is loaded from a CDN via an ES-module import map.
+
+  Targeted three.js version: r160 (0.160.0). No deprecated APIs are used
+  (BufferGeometry / THREE.Points / ShaderMaterial / AdditiveBlending are all
+  current; no Geometry, no .scale, no removed lighting helpers).
+
+  HOW THIS STAYS FAST (interactive framerate at 200k particles):
+    * ONE draw call: all particles live in a single THREE.Points object.
+    * Stateless motion: position is a pure function of (uTime, seed). No
+      per-frame CPU buffer writes, no readback, no ping-pong FBOs. The GPU
+      recomputes every position from scratch each frame, which is what a
+      single draw call + uniform uTime wants.
+    * Cheap noise: the potential field uses hand-written VALUE noise (8 hash
+      lookups + trilinear) instead of simplex, which is much cheaper per
+      sample for a flow field that only needs to be smooth enough to curl.
+    * Forward differences: the curl is taken with 4 potential samples (a
+      shared centre + +x/+y/+z) instead of 6 central-difference samples,
+      cutting the cost of every curl evaluation by a third.
+    * Bounded work: each particle does at most 4 sub-steps of advection
+      (a fixed, small, constant loop bound), so vertex cost is flat.
+    * Small soft points + capped DPR (2x) keep additive overdraw low — with
+      200k points overdraw, not vertex cost, is the usual killer.
+    * Fragment shader is a few ALU ops + a discard for the round mask.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GPU Curl-Noise Flow Field</title>
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; width: 100%; overflow: hidden; background: #05060a; }
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  #scene { position: fixed; inset: 0; display: block; }
+
+  #ui {
+    position: fixed; top: 14px; left: 14px; z-index: 10;
+    padding: 12px 14px; min-width: 232px;
+    color: #cdd6ff;
+    background: rgba(10, 14, 28, 0.55);
+    border: 1px solid rgba(120, 150, 255, 0.18);
+    border-radius: 10px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    font-size: 12px;
+    user-select: none;
+  }
+  #ui h1 {
+    font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+    color: #eaf0ff; margin-bottom: 10px; text-transform: uppercase;
+  }
+  .row { display: flex; align-items: center; gap: 8px; margin: 7px 0; }
+  .row label { width: 52px; color: #9fb0ff; }
+  .row output { width: 46px; text-align: right; color: #eaf0ff; font-variant-numeric: tabular-nums; }
+  input[type="range"] {
+    flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
+    background: rgba(140,165,255,0.25); border-radius: 3px; outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 13px; height: 13px; border-radius: 50%;
+    background: #7fa0ff; cursor: pointer; box-shadow: 0 0 8px rgba(127,160,255,0.7);
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 13px; height: 13px; border: none; border-radius: 50%;
+    background: #7fa0ff; cursor: pointer;
+  }
+  #fps { margin-top: 10px; padding-top: 9px; border-top: 1px solid rgba(120,150,255,0.15);
+         display: flex; justify-content: space-between; color: #9fb0ff; }
+  #fps b { color: #eaf0ff; font-variant-numeric: tabular-nums; }
+  #help { margin-top: 8px; color: #6f7bb0; font-size: 11px; line-height: 1.5; }
+  kbd {
+    background: rgba(120,150,255,0.15); border-radius: 3px; padding: 0 4px;
+    color: #cdd6ff; font-size: 10px;
+  }
+</style>
+
+<!-- three.js via import map (r160) -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <div id="ui">
+    <h1>Curl-Noise Flow Field</h1>
+    <div class="row">
+      <label for="scale">Scale</label>
+      <input id="scale" type="range" min="0.02" max="0.25" step="0.005" value="0.08" />
+      <output id="scaleOut">0.080</output>
+    </div>
+    <div class="row">
+      <label for="speed">Speed</label>
+      <input id="speed" type="range" min="0" max="2" step="0.02" value="0.6" />
+      <output id="speedOut">0.60</output>
+    </div>
+    <div class="row">
+      <label for="life">Life</label>
+      <input id="life" type="range" min="1" max="12" step="0.1" value="5" />
+      <output id="lifeOut">5.0</output>
+    </div>
+    <div id="fps"><span>FPS</span><b id="fpsVal">--</b><span id="msVal"></span></div>
+    <div id="help">
+      Move mouse to push the field.<br />
+      <kbd>&uarr;</kbd><kbd>&darr;</kbd> scale &nbsp; <kbd>&larr;</kbd><kbd>&rarr;</kbd> speed<br />
+      <kbd>Q</kbd><kbd>E</kbd> life &nbsp; <kbd>R</kbd> reset
+    </div>
+  </div>
+
+  <script type="module">
+  import * as THREE from 'three';
+
+  // ------------------------------------------------------------------
+  // Configuration
+  // ------------------------------------------------------------------
+  const PARTICLES = 200000;         // requirement: minimum 200,000
+  const BOX = 60.0;                 // field volume is [-BOX/2, BOX/2]^3
+  const SWIRL = 3.0;                // internal field-follow strength
+  const STEPS = 4;                  // sub-steps per particle (mirrored in GLSL)
+  const MAX_DPR = 2.0;              // cap device pixel ratio to limit overdraw
+
+  const canvas = document.getElementById('scene');
+
+  // ------------------------------------------------------------------
+  // Renderer / scene / camera
+  // ------------------------------------------------------------------
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: false,
+    powerPreference: 'high-performance',
+  });
+  renderer.setClearColor(0x05060a, 1);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+
+  // ------------------------------------------------------------------
+  // Shared uniforms
+  // ------------------------------------------------------------------
+  const uniforms = {
+    uTime:      { value: 0.0 },
+    uLife:      { value: 5.0 },
+    uScale:     { value: 0.08 },
+    uSpeed:     { value: 0.6 },
+    uSwirl:     { value: SWIRL },
+    uBox:       { value: BOX },
+    uMouse:     { value: new THREE.Vector3(1e4, 1e4, 1e4) }, // parked far away
+    uMouseOn:   { value: 0.0 },
+    uPointBase: { value: 2.2 },
+    uPointMax:  { value: 26.0 },
+    uDpr:       { value: 1.0 },
+    uRes:       { value: new THREE.Vector2(1, 1) },
+  };
+
+  // ------------------------------------------------------------------
+  // GLSL: particle vertex shader (noise + curl + lifetime, all in-shader)
+  // ------------------------------------------------------------------
+  const particleVert = /* glsl */`
+    uniform float uTime;
+    uniform float uLife;
+    uniform float uScale;
+    uniform float uSpeed;
+    uniform float uSwirl;
+    uniform float uBox;
+    uniform vec3  uMouse;
+    uniform float uMouseOn;
+    uniform float uPointBase;
+    uniform float uPointMax;
+    uniform float uDpr;
+
+    attribute vec4 aSeed;
+
+    varying float vSpeed;
+    varying float vFade;
+
+    // --- cheap hashing -------------------------------------------------
+    float hash1(float n) { return fract(sin(n) * 43758.5453123); }
+    vec3  hash3(float n) { return vec3(hash1(n), hash1(n + 12.9898), hash1(n + 78.233)); }
+
+    // scalar value at integer lattice points, in [0,1]
+    float lattice(vec3 ip) {
+      return fract(sin(dot(ip, vec3(127.1, 311.7, 74.7))) * 43758.5453123);
+    }
+
+    // 3D value noise: 8 corner hashes + smoothstep trilinear interpolation
+    float vnoise(vec3 p) {
+      vec3 i = floor(p);
+      vec3 f = fract(p);
+      vec3 u = f * f * (3.0 - 2.0 * f);
+      float a = lattice(i);
+      float b = lattice(i + vec3(1.0, 0.0, 0.0));
+      float c = lattice(i + vec3(0.0, 1.0, 0.0));
+      float d = lattice(i + vec3(1.0, 1.0, 0.0));
+      float e = lattice(i + vec3(0.0, 0.0, 1.0));
+      float g = lattice(i + vec3(1.0, 0.0, 1.0));
+      float h = lattice(i + vec3(0.0, 1.0, 1.0));
+      float k = lattice(i + vec3(1.0, 1.0, 1.0));
+      return mix(mix(mix(a, b, u.x), mix(c, d, u.x), u.y),
+                 mix(mix(e, g, u.x), mix(h, k, u.x), u.y), u.z);
+    }
+
+    // Vector potential: 3 independent, time-evolving value-noise fields.
+    // Shifting each axis's noise over time makes the vortices drift/morph.
+    vec3 potential(vec3 p, float t) {
+      return vec3(
+        vnoise(p + vec3( t * 0.10, 0.0, 0.0)),
+        vnoise(p + vec3(0.0,  t * 0.13, 0.0) + 5.2),
+        vnoise(p + vec3(0.0, 0.0,  t * 0.17) + 9.7)
+      );
+    }
+
+    // Curl of the potential by FORWARD finite differences:
+    //   curl = ( dFz/dy - dFy/dz, dFx/dz - dFz/dx, dFy/dx - dFx/dy )
+    // The result is divergence-free, so the field swirls instead of
+    // pulling particles into sinks. 4 potential samples (shared centre).
+    vec3 curl(vec3 p, float t) {
+      float e = 0.12;
+      vec3 p0 = potential(p, t);
+      vec3 p1 = potential(p + vec3(e, 0.0, 0.0), t);
+      vec3 p2 = potential(p + vec3(0.0, e, 0.0), t);
+      vec3 p3 = potential(p + vec3(0.0, 0.0, e), t);
+      float x = (p2.z - p0.z) - (p3.y - p0.y);
+      float y = (p3.x - p0.x) - (p1.z - p0.z);
+      float z = (p1.y - p0.y) - (p2.x - p0.x);
+      return vec3(x, y, z) / e;
+    }
+
+    void main() {
+      float t = uTime * uSpeed;
+
+      // ---- finite lifetime + respawn (pure function of uTime + seed) --
+      float cycle  = uTime + aSeed.x * 437.0;
+      float lifeId = floor(cycle / uLife);
+      float age    = cycle - lifeId * uLife;    // in [0, uLife)
+      float frac   = age / uLife;               // in [0, 1)
+
+      // Each life spawns at a fresh, random point in the volume.
+      float sp    = aSeed.y * 917.0 + lifeId * 47.7;
+      vec3 spawn  = (hash3(sp) - 0.5) * uBox;
+
+      // ---- advect through the curl field, a few fixed sub-steps -------
+      // dt is constant for a frame, so the traced path is continuous in
+      // age: the integer steps are exact and the fractional step bridges
+      // them smoothly (no per-frame jitter).
+      float dt    = uLife / 4.0;                // matches STEPS in JS
+      float prog  = age / dt;                   // in [0, STEPS)
+      int   full  = int(floor(prog));
+      float ffrac = prog - float(full);
+
+      vec3 p = spawn;
+      for (int i = 0; i < 4; i++) {
+        if (i >= full) break;
+        vec3 v = curl(p * uScale, t);
+        p += v * dt * uSpeed * uSwirl;
+      }
+      vec3 vNow = curl(p * uScale, t);
+      p += vNow * dt * ffrac * uSpeed * uSwirl;
+
+      // ---- mouse distortion: push particles away from the cursor -----
+      vec3  toM = p - uMouse;
+      float mD  = dot(toM, toM);
+      float mF  = uMouseOn * exp(-mD * 0.01);
+      p += normalize(toM + vec3(1e-4)) * mF * 10.0;
+
+      // ---- colour driver: velocity magnitude (+ hot burst near cursor) -
+      vSpeed = clamp(length(vNow) * uSpeed * uSwirl / 3.0, 0.0, 1.0) + mF * 0.5;
+
+      // fade in on spawn, fade out before death
+      vFade = smoothstep(0.0, 0.08, frac) * (1.0 - smoothstep(0.82, 1.0, frac));
+
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      gl_Position = projectionMatrix * mv;
+
+      float ps = uPointBase * (0.7 + 0.6 * vSpeed) * (220.0 / -mv.z);
+      gl_PointSize = clamp(ps * uDpr, 1.0, uPointMax);
+    }
+  `;
+
+  // ------------------------------------------------------------------
+  // GLSL: particle fragment shader (procedural soft sprite + palette)
+  // ------------------------------------------------------------------
+  const particleFrag = /* glsl */`
+    precision highp float;
+
+    varying float vSpeed;
+    varying float vFade;
+
+    uniform vec3 uCold;
+    uniform vec3 uMid;
+    uniform vec3 uHot;
+
+    void main() {
+      // procedural round sprite: no texture, built from gl_PointCoord
+      vec2 c = gl_PointCoord - 0.5;
+      float d = length(c);
+      if (d > 0.5) discard;                    // round mask (no hard squares)
+      float glow = 1.0 - smoothstep(0.0, 0.5, d);
+      float alpha = glow * glow;               // soft falloff toward the edge
+
+      float s = clamp(vSpeed, 0.0, 1.0);
+      vec3 col = mix(uCold, uMid, smoothstep(0.0, 0.55, s));
+      col = mix(col, uHot, smoothstep(0.5, 1.0, s));   // faster = hotter
+
+      gl_FragColor = vec4(col, alpha * vFade);
+    }
+  `;
+
+  // ------------------------------------------------------------------
+  // GLSL: background (dark radial gradient + subtle vignette, in-scene)
+  // ------------------------------------------------------------------
+  const bgVert = /* glsl */`
+    void main() { gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+  `;
+  const bgFrag = /* glsl */`
+    precision highp float;
+    uniform vec3 uInner;
+    uniform vec3 uOuter;
+    uniform vec2 uRes;
+    void main() {
+      vec2 p = gl_FragCoord.xy / uRes - 0.5;
+      p.x *= uRes.x / max(uRes.y, 1.0);        // aspect-correct
+      float d = length(p);
+      vec3 col = mix(uInner, uOuter, smoothstep(0.0, 0.8, d));
+      col *= 0.92 + 0.08 * (gl_FragCoord.y / uRes.y);  // faint vertical lift
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  // ------------------------------------------------------------------
+  // Background sphere (inner surface, drawn first, opaque)
+  // ------------------------------------------------------------------
+  const bgMat = new THREE.ShaderMaterial({
+    vertexShader: bgVert,
+    fragmentShader: bgFrag,
+    uniforms: {
+      uInner: { value: new THREE.Color(0x0c1330) },
+      uOuter: { value: new THREE.Color(0x03040a) },
+      uRes:   { value: uniforms.uRes.value },
+    },
+    side: THREE.BackSide,
+    depthWrite: false,
+    depthTest: false,
+  });
+  const bgMesh = new THREE.Mesh(new THREE.SphereGeometry(400, 24, 16), bgMat);
+  bgMesh.renderOrder = -1;
+  scene.add(bgMesh);
+
+  // ------------------------------------------------------------------
+  // Particles: one BufferGeometry, one THREE.Points, one ShaderMaterial
+  // ------------------------------------------------------------------
+  const positions = new Float32Array(PARTICLES * 3);   // placeholder; real pos in shader
+  const seeds = new Float32Array(PARTICLES * 4);
+  for (let i = 0; i < seeds.length; i++) seeds[i] = Math.random();
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 4));
+
+  const particleMat = new THREE.ShaderMaterial({
+    vertexShader: particleVert,
+    fragmentShader: particleFrag,
+    uniforms: Object.assign({
+      uCold: { value: new THREE.Color(0x1a40cc) },
+      uMid:  { value: new THREE.Color(0x7a33f5) },
+      uHot:  { value: new THREE.Color(0xff8a2a) },
+    }, uniforms),
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    blending: THREE.AdditiveBlending,   // dense regions bloom naturally
+  });
+
+  const points = new THREE.Points(geometry, particleMat);
+  points.frustumCulled = false;         // positions computed in-shader
+  points.renderOrder = 1;
+  scene.add(points);
+
+  // ------------------------------------------------------------------
+  // Mouse -> world-space point on the camera-facing plane through origin
+  // ------------------------------------------------------------------
+  const _ndc = new THREE.Vector3();
+  const _dir = new THREE.Vector3();
+  const _nrm = new THREE.Vector3();
+  let mouseX = 0, mouseY = 0, mouseActive = false;
+
+  window.addEventListener('pointermove', (e) => {
+    const r = canvas.getBoundingClientRect();
+    mouseX = ((e.clientX - r.left) / r.width) * 2 - 1;
+    mouseY = -(((e.clientY - r.top) / r.height) * 2 - 1);
+    mouseActive = true;
+  });
+  window.addEventListener('pointerleave', () => { mouseActive = false; });
+
+  function updateMouseWorld() {
+    if (!mouseActive) {
+      // ease the effect off and park the cursor far away
+      uniforms.uMouseOn.value *= 0.9;
+      if (uniforms.uMouseOn.value < 0.01) uniforms.uMouseOn.value = 0.0;
+      return;
+    }
+    uniforms.uMouseOn.value = Math.min(1.0, uniforms.uMouseOn.value + 0.08);
+
+    _ndc.set(mouseX, mouseY, 0.5).unproject(camera);
+    _dir.copy(_ndc).sub(camera.position).normalize();
+    camera.getWorldDirection(_nrm);                 // plane normal (toward field)
+    const denom = _dir.dot(_nrm);
+    if (Math.abs(denom) < 1e-5) return;
+    const s = -camera.position.dot(_nrm) / denom;   // plane point = origin
+    if (s > 0) uniforms.uMouse.value.copy(camera.position).addScaledVector(_dir, s);
+  }
+
+  // ------------------------------------------------------------------
+  // On-screen + keyboard controls
+  // ------------------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    scale: $('scale'), speed: $('speed'), life: $('life'),
+    scaleOut: $('scaleOut'), speedOut: $('speedOut'), lifeOut: $('lifeOut'),
+  };
+  const DEFAULTS = { scale: 0.08, speed: 0.6, life: 5.0 };
+  const RANGE = {
+    scale: { min: 0.02, max: 0.25 },
+    speed: { min: 0, max: 2 },
+    life:  { min: 1, max: 12 },
+  };
+
+  function setParam(key, value) {
+    value = Math.min(RANGE[key].max, Math.max(RANGE[key].min, value));
+    if (key === 'scale') uniforms.uScale.value = value;
+    if (key === 'speed') uniforms.uSpeed.value = value;
+    if (key === 'life')  uniforms.uLife.value  = value;
+    if (key === 'scale') { els.scale.value = value; els.scaleOut.textContent = value.toFixed(3); }
+    if (key === 'speed') { els.speed.value = value; els.speedOut.textContent = value.toFixed(2); }
+    if (key === 'life')  { els.life.value  = value; els.lifeOut.textContent  = value.toFixed(1); }
+  }
+
+  els.scale.addEventListener('input', () => setParam('scale', parseFloat(els.scale.value)));
+  els.speed.addEventListener('input', () => setParam('speed', parseFloat(els.speed.value)));
+  els.life .addEventListener('input', () => setParam('life',  parseFloat(els.life.value)));
+
+  window.addEventListener('keydown', (e) => {
+    const cur = (k) => k === 'scale' ? uniforms.uScale.value : k === 'speed' ? uniforms.uSpeed.value : uniforms.uLife.value;
+    switch (e.code) {
+      case 'ArrowUp':    e.preventDefault(); setParam('scale', cur('scale') + 0.01); break;
+      case 'ArrowDown':  e.preventDefault(); setParam('scale', cur('scale') - 0.01); break;
+      case 'ArrowRight': e.preventDefault(); setParam('speed', cur('speed') + 0.05); break;
+      case 'ArrowLeft':  e.preventDefault(); setParam('speed', cur('speed') - 0.05); break;
+      case 'KeyE':       setParam('life', cur('life') + 0.5); break;
+      case 'KeyQ':       setParam('life', cur('life') - 0.5); break;
+      case 'KeyR':       setParam('scale', DEFAULTS.scale); setParam('speed', DEFAULTS.speed); setParam('life', DEFAULTS.life); break;
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // Resize (handles device pixel ratio)
+  // ------------------------------------------------------------------
+  function resize() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+
+    renderer.setPixelRatio(dpr);
+    renderer.setSize(w, h);
+
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+
+    uniforms.uDpr.value = dpr;
+    const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+    uniforms.uRes.value.copy(size);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ------------------------------------------------------------------
+  // FPS counter (hand-rolled, no library)
+  // ------------------------------------------------------------------
+  const fpsEl = $('fpsVal');
+  const msEl = $('msVal');
+  let frames = 0;
+  let fpsT0 = performance.now();
+  let lastT = performance.now();
+
+  function tickFps(now) {
+    frames++;
+    const dt = now - lastT;
+    lastT = now;
+    if (now - fpsT0 >= 500) {
+      const fps = (frames * 1000) / (now - fpsT0);
+      fpsEl.textContent = fps.toFixed(0);
+      msEl.textContent = (1000 / fps).toFixed(1) + ' ms';
+      frames = 0;
+      fpsT0 = now;
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Render loop
+  // ------------------------------------------------------------------
+  const CLOCK0 = performance.now();
+  function animate() {
+    requestAnimationFrame(animate);
+
+    const now = performance.now();
+    const t = (now - CLOCK0) / 1000;
+    uniforms.uTime.value = t;
+
+    // slow autonomous orbit so the 3D structure is visible hands-free
+    const a = t * 0.06;
+    camera.position.set(
+      Math.sin(a) * 95,
+      Math.sin(t * 0.11) * 18,
+      Math.cos(a) * 95
+    );
+    camera.lookAt(0, 0, 0);
+
+    updateMouseWorld();
+    renderer.render(scene, camera);
+    tickFps(now);
+  }
+  animate();
+  </script>
+</body>
+</html>
