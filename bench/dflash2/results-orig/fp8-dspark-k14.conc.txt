@@ -1,0 +1,5 @@
+endpoint http://127.0.0.1:8002/v1  model qwen3.8-27b  prompts: DISTINCT
+DISTINCT c1:   1500 tok /   26.9s =   55.85 tok/s aggregate |  55.85 per stream
+DISTINCT c4:   6000 tok /   70.2s =   85.52 tok/s aggregate |  21.38 per stream
+DISTINCT c8:  12000 tok /  103.4s =  116.09 tok/s aggregate |  14.51 per stream
+DISTINCT c16:  24000 tok /  201.4s =  119.16 tok/s aggregate |   7.45 per stream

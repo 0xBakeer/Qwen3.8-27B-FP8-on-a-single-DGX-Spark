@@ -1,0 +1,91 @@
+{
+  "tag": "gguf-q4km-nospec",
+  "ts": "2026-08-19T16:37:21",
+  "max_tokens": 384,
+  "points": [
+    {
+      "concurrency": 1,
+      "completed": 1,
+      "wall_s": 36.35,
+      "total_tokens": 384,
+      "aggregate_tps": 10.56,
+      "per_stream_tps_mean": 10.67,
+      "ttft_p50": 0.36,
+      "ttft_p95": 0.35962363809812814,
+      "spec": {
+        "spec_active": false
+      },
+      "scaling_vs_c1": 1.0
+    },
+    {
+      "concurrency": 2,
+      "completed": 2,
+      "wall_s": 40.91,
+      "total_tokens": 768,
+      "aggregate_tps": 18.77,
+      "per_stream_tps_mean": 9.52,
+      "ttft_p50": 0.52,
+      "ttft_p95": 0.402,
+      "spec": {
+        "spec_active": false
+      },
+      "scaling_vs_c1": 1.777
+    },
+    {
+      "concurrency": 4,
+      "completed": 4,
+      "wall_s": 48.74,
+      "total_tokens": 1536,
+      "aggregate_tps": 31.52,
+      "per_stream_tps_mean": 8.03,
+      "ttft_p50": 0.884,
+      "ttft_p95": 1.034,
+      "spec": {
+        "spec_active": false
+      },
+      "scaling_vs_c1": 2.985
+    },
+    {
+      "concurrency": 8,
+      "completed": 8,
+      "wall_s": 67.96,
+      "total_tokens": 3072,
+      "aggregate_tps": 45.21,
+      "per_stream_tps_mean": 5.82,
+      "ttft_p50": 2.158,
+      "ttft_p95": 2.163,
+      "spec": {
+        "spec_active": false
+      },
+      "scaling_vs_c1": 4.281
+    },
+    {
+      "concurrency": 12,
+      "completed": 12,
+      "wall_s": 85.96,
+      "total_tokens": 4599,
+      "aggregate_tps": 53.5,
+      "per_stream_tps_mean": 4.59,
+      "ttft_p50": 1.962,
+      "ttft_p95": 2.513,
+      "spec": {
+        "spec_active": false
+      },
+      "scaling_vs_c1": 5.066
+    },
+    {
+      "concurrency": 16,
+      "completed": 16,
+      "wall_s": 102.61,
+      "total_tokens": 6144,
+      "aggregate_tps": 59.88,
+      "per_stream_tps_mean": 3.88,
+      "ttft_p50": 3.22,
+      "ttft_p95": 3.87,
+      "spec": {
+        "spec_active": false
+      },
+      "scaling_vs_c1": 5.67
+    }
+  ]
+}

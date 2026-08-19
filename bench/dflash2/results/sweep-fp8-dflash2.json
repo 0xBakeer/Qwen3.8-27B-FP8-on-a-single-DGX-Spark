@@ -1,0 +1,127 @@
+{
+  "tag": "fp8-dflash2",
+  "ts": "2026-08-19T16:03:08",
+  "max_tokens": 384,
+  "points": [
+    {
+      "concurrency": 1,
+      "completed": 1,
+      "wall_s": 11.07,
+      "total_tokens": 384,
+      "aggregate_tps": 34.68,
+      "per_stream_tps_mean": 35.72,
+      "ttft_p50": 0.322,
+      "ttft_p95": 0.322461562929675,
+      "spec": {
+        "spec_active": true,
+        "num_drafts": 68.0,
+        "draft_tokens": 476.0,
+        "accepted_tokens": 319.0,
+        "draft_len": 7.0,
+        "accept_rate": 0.6702,
+        "acceptance_length": 5.691
+      },
+      "scaling_vs_c1": 1.0
+    },
+    {
+      "concurrency": 2,
+      "completed": 2,
+      "wall_s": 21.45,
+      "total_tokens": 768,
+      "aggregate_tps": 35.8,
+      "per_stream_tps_mean": 26.33,
+      "ttft_p50": 0.328,
+      "ttft_p95": 0.327,
+      "spec": {
+        "spec_active": true,
+        "num_drafts": 197.0,
+        "draft_tokens": 1379.0,
+        "accepted_tokens": 574.0,
+        "draft_len": 7.0,
+        "accept_rate": 0.4162,
+        "acceptance_length": 3.914
+      },
+      "scaling_vs_c1": 1.032
+    },
+    {
+      "concurrency": 4,
+      "completed": 4,
+      "wall_s": 22.63,
+      "total_tokens": 1536,
+      "aggregate_tps": 67.87,
+      "per_stream_tps_mean": 27.23,
+      "ttft_p50": 0.573,
+      "ttft_p95": 0.573,
+      "spec": {
+        "spec_active": true,
+        "num_drafts": 338.0,
+        "draft_tokens": 2366.0,
+        "accepted_tokens": 1213.0,
+        "draft_len": 7.0,
+        "accept_rate": 0.5127,
+        "acceptance_length": 4.589
+      },
+      "scaling_vs_c1": 1.957
+    },
+    {
+      "concurrency": 8,
+      "completed": 8,
+      "wall_s": 26.6,
+      "total_tokens": 3072,
+      "aggregate_tps": 115.5,
+      "per_stream_tps_mean": 22.1,
+      "ttft_p50": 0.619,
+      "ttft_p95": 0.62,
+      "spec": {
+        "spec_active": true,
+        "num_drafts": 715.0,
+        "draft_tokens": 5005.0,
+        "accepted_tokens": 2374.0,
+        "draft_len": 7.0,
+        "accept_rate": 0.4743,
+        "acceptance_length": 4.32
+      },
+      "scaling_vs_c1": 3.33
+    },
+    {
+      "concurrency": 12,
+      "completed": 12,
+      "wall_s": 32.28,
+      "total_tokens": 4608,
+      "aggregate_tps": 142.76,
+      "per_stream_tps_mean": 19.32,
+      "ttft_p50": 0.867,
+      "ttft_p95": 0.87,
+      "spec": {
+        "spec_active": true,
+        "num_drafts": 1065.0,
+        "draft_tokens": 7455.0,
+        "accepted_tokens": 3566.0,
+        "draft_len": 7.0,
+        "accept_rate": 0.4783,
+        "acceptance_length": 4.348
+      },
+      "scaling_vs_c1": 4.116
+    },
+    {
+      "concurrency": 16,
+      "completed": 16,
+      "wall_s": 34.41,
+      "total_tokens": 6144,
+      "aggregate_tps": 178.56,
+      "per_stream_tps_mean": 17.02,
+      "ttft_p50": 1.181,
+      "ttft_p95": 1.186,
+      "spec": {
+        "spec_active": true,
+        "num_drafts": 1442.0,
+        "draft_tokens": 10094.0,
+        "accepted_tokens": 4718.0,
+        "draft_len": 7.0,
+        "accept_rate": 0.4674,
+        "acceptance_length": 4.272
+      },
+      "scaling_vs_c1": 5.149
+    }
+  ]
+}

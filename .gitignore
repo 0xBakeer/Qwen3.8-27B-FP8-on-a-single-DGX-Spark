@@ -3,4 +3,6 @@ __pycache__/
 *.log
 .vllm.log
 results/
+# ...but the DFlash2 raw measurements are part of the record
+!bench/dflash2/results/
 .DS_Store

@@ -1,0 +1,135 @@
+{
+  "tag": "edit-nvfp4-nospec",
+  "model": "qwen3.8-27b",
+  "temp": 0.0,
+  "max_tokens": 1200,
+  "think": false,
+  "ts": "2026-08-19T11:00:53",
+  "single": {
+    "edit_go_field": {
+      "runs": [
+        {
+          "ttft": 0.3207,
+          "wall": 47.94,
+          "tokens": 536,
+          "decode_tps": 11.26
+        },
+        {
+          "ttft": 0.3215,
+          "wall": 48.0,
+          "tokens": 536,
+          "decode_tps": 11.24
+        },
+        {
+          "ttft": 0.3292,
+          "wall": 48.085,
+          "tokens": 536,
+          "decode_tps": 11.22
+        }
+      ],
+      "decode_tps_median": 11.24,
+      "ttft_median": 0.3215
+    },
+    "edit_go_rename": {
+      "runs": [
+        {
+          "ttft": 0.3188,
+          "wall": 42.653,
+          "tokens": 476,
+          "decode_tps": 11.24
+        },
+        {
+          "ttft": 0.3196,
+          "wall": 42.677,
+          "tokens": 476,
+          "decode_tps": 11.24
+        },
+        {
+          "ttft": 0.3209,
+          "wall": 42.658,
+          "tokens": 476,
+          "decode_tps": 11.24
+        }
+      ],
+      "decode_tps_median": 11.24,
+      "ttft_median": 0.3196
+    },
+    "edit_py_logging": {
+      "runs": [
+        {
+          "ttft": 0.3051,
+          "wall": 42.902,
+          "tokens": 479,
+          "decode_tps": 11.24
+        },
+        {
+          "ttft": 0.303,
+          "wall": 42.884,
+          "tokens": 479,
+          "decode_tps": 11.25
+        },
+        {
+          "ttft": 0.3023,
+          "wall": 42.907,
+          "tokens": 479,
+          "decode_tps": 11.24
+        }
+      ],
+      "decode_tps_median": 11.24,
+      "ttft_median": 0.303
+    },
+    "edit_py_type": {
+      "runs": [
+        {
+          "ttft": 0.3033,
+          "wall": 41.402,
+          "tokens": 462,
+          "decode_tps": 11.24
+        },
+        {
+          "ttft": 0.3051,
+          "wall": 41.411,
+          "tokens": 462,
+          "decode_tps": 11.24
+        },
+        {
+          "ttft": 0.3034,
+          "wall": 41.401,
+          "tokens": 462,
+          "decode_tps": 11.24
+        }
+      ],
+      "decode_tps_median": 11.24,
+      "ttft_median": 0.3034
+    }
+  },
+  "samples": {
+    "edit_go_field": "```go\npackage cache\n\nimport (\n\t\"errors\"\n\t\"sync\"\n\t\"time\"\n)\n\nvar ErrNotFound = errors.New(\"cache: key not found\")\n\ntype entry struct {\n\tvalue     []byte\n\texpiresAt time.Time\n}\n\ntype Cache struct {\n\tmu      sync.RWMutex\n\titems   map[string]entry\n\tttl     time.Duration\n\tmaxSize int\n\thits    int\n\tmisses  int\n}\n\nfunc New(ttl time.Duration, maxSize int) *Cache {\n\treturn &Cache{\n\t\titems:   make(map[string]entry),\n\t\tttl:     ttl,\n\t\tmaxSize: maxSize,\n\t}\n}\n\nfunc (c *Cache) Get(key string) ([]byte, error) {\n\tc.mu.RLock()\n\tdefer c.mu.RUnlock()\n\te, ok := c.items[key]\n\tif !ok {\n\t\tc.misses++\n\t\treturn nil, ErrNotFound\n\t}\n\tif time.Now().After(e.expiresAt) {\n\t\tc.misses++\n\t\treturn nil, ErrNotFound\n\t}\n\tc.hits++\n\treturn e.value, nil\n}\n\nfunc (c *Cache) Set(key string, value []byte) {\n\tc.mu.Lock()\n\tdefer c.mu.Unlock()\n\tif len(c.items) >= c.maxSize {\n\t\tc.evictOldest()\n\t}\n\tc.items[key] = entry{\n\t\tvalue:     value,\n\t\texpiresAt: time.Now().Add(c.ttl),\n\t}\n}\n\nfunc (c *Cache) evictOldest() {\n\tvar oldestKey string\n\tvar oldest time.Time\n\tfirst := true\n\tfor k, e := range c.items {\n\t\tif first || e.expiresAt.Before(oldest) {\n\t\t\toldestKey = k\n\t\t\toldest = e.expiresAt\n\t\t\tfirst = false\n\t\t}\n\t}\n\tif oldestKey != \"\" {\n\t\tdelete(c.items, oldestKey)\n\t}\n}\n\nfunc (c *Cache) Delete(key string) {\n\tc.mu.Lock()\n\tdefer c.mu.Unlock()\n\tdelete(c.items, key)\n}\n\nfunc (c *Cache) Len() int {\n\tc.mu.RLock()\n\tdefer c.mu.RUnlock()\n\treturn len(c.items)\n}\n\nfunc (c *Cache) Stats() (hits, misses int) {\n\tc.mu.RLock()\n\tdefer c.mu.RUnlock()\n\treturn c.hits, c.misses\n}\n```",
+    "edit_go_rename": "```go\npackage cache\n\nimport (\n\t\"errors\"\n\t\"sync\"\n\t\"time\"\n)\n\nvar ErrNotFound = errors.New(\"cache: key not found\")\n\ntype cacheEntry struct {\n\tvalue     []byte\n\texpiresAt time.Time\n}\n\ntype Cache struct {\n\tmu         sync.RWMutex\n\titems      map[string]cacheEntry\n\tttl        time.Duration\n\tcapacity   int\n}\n\nfunc New(ttl time.Duration, capacity int) *Cache {\n\treturn &Cache{\n\t\titems:    make(map[string]cacheEntry),\n\t\tttl:      ttl,\n\t\tcapacity: capacity,\n\t}\n}\n\nfunc (c *Cache) Get(key string) ([]byte, error) {\n\tc.mu.RLock()\n\tdefer c.mu.RUnlock()\n\te, ok := c.items[key]\n\tif !ok {\n\t\treturn nil, ErrNotFound\n\t}\n\tif time.Now().After(e.expiresAt) {\n\t\treturn nil, ErrNotFound\n\t}\n\treturn e.value, nil\n}\n\nfunc (c *Cache) Set(key string, value []byte) {\n\tc.mu.Lock()\n\tdefer c.mu.Unlock()\n\tif len(c.items) >= c.capacity {\n\t\tc.evictOldest()\n\t}\n\tc.items[key] = cacheEntry{\n\t\tvalue:     value,\n\t\texpiresAt: time.Now().Add(c.ttl),\n\t}\n}\n\nfunc (c *Cache) evictOldest() {\n\tvar oldestKey string\n\tvar oldest time.Time\n\tfirst := true\n\tfor k, e := range c.items {\n\t\tif first || e.expiresAt.Before(oldest) {\n\t\t\toldestKey = k\n\t\t\toldest = e.expiresAt\n\t\t\tfirst = false\n\t\t}\n\t}\n\tif oldestKey != \"\" {\n\t\tdelete(c.items, oldestKey)\n\t}\n}\n\nfunc (c *Cache) Delete(key string) {\n\tc.mu.Lock()\n\tdefer c.mu.Unlock()\n\tdelete(c.items, key)\n}\n\nfunc (c *Cache) Len() int {\n\tc.mu.RLock()\n\tdefer c.mu.RUnlock()\n\treturn len(c.items)\n}\n```",
+    "edit_py_logging": "```python\nimport json\nimport logging\nfrom dataclasses import dataclass\nfrom typing import Any, Iterable\n\nlogger = logging.getLogger(__name__)\n\n\n@dataclass\nclass Record:\n    key: str\n    payload: dict[str, Any]\n    version: int = 1\n\n\nclass Store:\n    def __init__(self, path: str) -> None:\n        self.path = path\n        self._data: dict[str, Record] = {}\n        self._dirty = False\n\n    def load(self) -> None:\n        try:\n            with open(self.path) as fh:\n                raw = json.load(fh)\n        except FileNotFoundError:\n            logger.warning(\"store %s missing, starting empty\", self.path)\n            return\n        for key, item in raw.items():\n            self._data[key] = Record(key=key, payload=item[\"payload\"], version=item[\"version\"])\n\n    def save(self) -> None:\n        if not self._dirty:\n            return\n        out = {k: {\"payload\": r.payload, \"version\": r.version} for k, r in self._data.items()}\n        with open(self.path, \"w\") as fh:\n            json.dump(out, fh, indent=2)\n        self._dirty = False\n\n    def put(self, key: str, payload: dict[str, Any]) -> Record:\n        logger.debug(\"put key=%s\", key)\n        existing = self._data.get(key)\n        version = existing.version + 1 if existing else 1\n        rec = Record(key=key, payload=payload, version=version)\n        self._data[key] = rec\n        self._dirty = True\n        return rec\n\n    def get(self, key: str) -> Record | None:\n        logger.debug(\"get key=%s\", key)\n        return self._data.get(key)\n\n    def delete(self, key: str) -> bool:\n        logger.debug(\"delete key=%s\", key)\n        if key in self._data:\n            del self._data[key]\n            self._dirty = True\n            return True\n        return False\n\n    def keys(self) -> Iterable[str]:\n        return self._data.keys()\n```",
+    "edit_py_type": "```python\nimport json\nimport logging\nimport time\nfrom dataclasses import dataclass\nfrom typing import Any, Iterable\n\nlogger = logging.getLogger(__name__)\n\n\n@dataclass\nclass Record:\n    key: str\n    payload: dict[str, Any]\n    version: int = 1\n    updated_at: float = 0.0\n\n\nclass Store:\n    def __init__(self, path: str) -> None:\n        self.path = path\n        self._data: dict[str, Record] = {}\n        self._dirty = False\n\n    def load(self) -> None:\n        try:\n            with open(self.path) as fh:\n                raw = json.load(fh)\n        except FileNotFoundError:\n            logger.warning(\"store %s missing, starting empty\", self.path)\n            return\n        for key, item in raw.items():\n            self._data[key] = Record(key=key, payload=item[\"payload\"], version=item[\"version\"])\n\n    def save(self) -> None:\n        if not self._dirty:\n            return\n        out = {k: {\"payload\": r.payload, \"version\": r.version} for k, r in self._data.items()}\n        with open(self.path, \"w\") as fh:\n            json.dump(out, fh, indent=2)\n        self._dirty = False\n\n    def put(self, key: str, payload: dict[str, Any]) -> Record:\n        existing = self._data.get(key)\n        version = existing.version + 1 if existing else 1\n        rec = Record(key=key, payload=payload, version=version, updated_at=time.time())\n        self._data[key] = rec\n        self._dirty = True\n        return rec\n\n    def get(self, key: str) -> Record | None:\n        return self._data.get(key)\n\n    def delete(self, key: str) -> bool:\n        if key in self._data:\n            del self._data[key]\n            self._dirty = True\n            return True\n        return False\n\n    def keys(self) -> Iterable[str]:\n        return self._data.keys()\n```"
+  },
+  "spec": {
+    "spec_active": false
+  },
+  "decode_tps_mean_of_medians": 11.24,
+  "batch": {
+    "n": 8,
+    "wall": 55.32,
+    "total_tokens": 3904,
+    "aggregate_tps": 70.57,
+    "per_stream_tps": 8.82,
+    "spec": {
+      "spec_active": false
+    }
+  },
+  "mem_gib": {
+    "total": 121.6,
+    "available": 18.0,
+    "used": 103.7
+  },
+  "kv": {
+    "vllm:kv_cache_usage_perc{engine=\"0\",model_name=\"qwen3.8-27b\"}": 0.0,
+    "vllm:cache_config_info{_block_size_resolved=\"True\",block_size=\"1568\",cache_dtype=\"auto\",calculate_kv_scales=\"False\",enable_prefix_caching=\"True\",engine=\"0\",gpu_memory_utilization=\"0.8\",is_attention_free=\"False\",kv_cache_dtype_skip_layers=\"[]\",kv_cache_max_concurrency=\"16.1\",kv_cache_memory_bytes=\"None\",kv_cache_size_tokens=\"2110259\",kv_offloading_backend=\"native\",kv_offloading_size=\"None\",kv_sharing_fast_prefill=\"False\",mamba_block_size=\"16\",mamba_cache_dtype=\"auto\",mamba_cache_mode=\"align\",mamba_page_size_padded=\"None\",mamba_ssm_cache_dtype=\"float32\",num_cpu_blocks=\"None\",num_gpu_blocks=\"1449\",num_gpu_blocks_override=\"None\",prefix_caching_hash_algo=\"sha256\",prefix_match_unit=\"None\",replayssm_buffer_len=\"16\",skip_page_size_padded=\"None\",sliding_window=\"None\",use_replayssm=\"False\",user_specified_block_size=\"False\",user_specified_mamba_block_size=\"False\"}": 1.0
+  }
+}

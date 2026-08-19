@@ -1,0 +1,144 @@
+{
+  "tag": "gguf-q4km-mtp3",
+  "model": "qwen3.8-27b",
+  "temp": 0.0,
+  "max_tokens": 512,
+  "think": false,
+  "ts": "2026-08-19T13:27:32",
+  "single": {
+    "code": {
+      "runs": [
+        {
+          "ttft": 0.4101,
+          "wall": 17.314,
+          "tokens": 512,
+          "decode_tps": 30.29
+        },
+        {
+          "ttft": 0.2654,
+          "wall": 17.145,
+          "tokens": 512,
+          "decode_tps": 30.33
+        },
+        {
+          "ttft": 0.1746,
+          "wall": 17.084,
+          "tokens": 512,
+          "decode_tps": 30.28
+        }
+      ],
+      "decode_tps_median": 30.29,
+      "ttft_median": 0.2654
+    },
+    "prose": {
+      "runs": [
+        {
+          "ttft": 0.3398,
+          "wall": 21.535,
+          "tokens": 474,
+          "decode_tps": 22.36
+        },
+        {
+          "ttft": 0.2638,
+          "wall": 21.418,
+          "tokens": 474,
+          "decode_tps": 22.41
+        },
+        {
+          "ttft": 0.1829,
+          "wall": 21.376,
+          "tokens": 474,
+          "decode_tps": 22.37
+        }
+      ],
+      "decode_tps_median": 22.37,
+      "ttft_median": 0.2638
+    },
+    "math": {
+      "runs": [
+        {
+          "ttft": 0.3557,
+          "wall": 17.071,
+          "tokens": 512,
+          "decode_tps": 30.63
+        },
+        {
+          "ttft": 0.2655,
+          "wall": 16.989,
+          "tokens": 512,
+          "decode_tps": 30.62
+        },
+        {
+          "ttft": 0.1793,
+          "wall": 16.865,
+          "tokens": 512,
+          "decode_tps": 30.69
+        }
+      ],
+      "decode_tps_median": 30.63,
+      "ttft_median": 0.2655
+    },
+    "refactor": {
+      "runs": [
+        {
+          "ttft": 0.3629,
+          "wall": 18.226,
+          "tokens": 512,
+          "decode_tps": 28.66
+        },
+        {
+          "ttft": 0.2675,
+          "wall": 18.138,
+          "tokens": 512,
+          "decode_tps": 28.65
+        },
+        {
+          "ttft": 0.1837,
+          "wall": 18.065,
+          "tokens": 512,
+          "decode_tps": 28.63
+        }
+      ],
+      "decode_tps_median": 28.65,
+      "ttft_median": 0.2675
+    }
+  },
+  "samples": {
+    "code": "```go\npackage main\n\nimport \"sort\"\n\n// MergeIntervals merges all overlapping intervals in the input slice and returns the merged result.\nfunc MergeIntervals(in [][]int) [][]int {\n\tif len(in) == 0 {\n\t\treturn nil\n\t}\n\n\t// Sort intervals by start time\n\tsort.Slice(in, func(i, j int) bool {\n\t\treturn in[i][0] < in[j][0]\n\t})\n\n\t// Initialize the result with the first interval\n\tmerged := make([][]int, 0, len(in))\n\tmerged = append(merged, in[0])\n\n\t// Iterate through the remaining intervals and merge if overlapping\n\tfor i := 1; i < len(in); i++ {\n\t\tlast := merged[len(merged)-1]\n\t\tcurrent := in[i]\n\n\t\t// If the current interval overlaps with the last merged interval, merge them\n\t\tif current[0] <= last[1] {\n\t\t\t// Update the end of the last merged interval if the current one extends further\n\t\t\tif current[1] > last[1] {\n\t\t\t\tlast[1] = current[1]\n\t\t\t}\n\t\t} else {\n\t\t\t// No overlap, add the current interval as a new merged interval\n\t\t\tmerged = append(merged, current)\n\t\t}\n\t}\n\n\treturn merged\n}\n```\n\n```go\npackage main\n\nimport (\n\t\"reflect\"\n\t\"testing\"\n)\n\nfunc TestMergeIntervals(t *testing.T) {\n\ttests := []struct {\n\t\tname     string\n\t\tinput    [][]int\n\t\texpected [][]int\n\t}{\n\t\t{\n\t\t\tname:     \"overlapping intervals\",\n\t\t\tinput:    [][]int{{1, 3}, {2, 6}, {8, 10}, {15, 18}},\n\t\t\texpected: [][]int{{1, 6}, {8, 10}, {15, 18}},\n\t\t},\n\t\t{\n\t\t\tname:     \"contiguous intervals\",\n\t\t\tinput:    [][]int{{1, 4}, {4, 5}},\n\t\t\texpected: [][]int{{1, 5}},\n\t\t},\n\t\t{\n\t\t\tname:     \"no overlap\",\n\t\t\tinput:    [][]int{{1, 2}, {",
+    "prose": "When you run a large language model (LLM) on a single computer, the bottleneck is almost always memory bandwidth, not the speed of the math chips (FLOPs). To understand why, imagine the difference between a librarian who can read incredibly fast and a library where the books are stored in a distant warehouse.\n\nIn a large dense model, the \"books\" are the model\u2019s weights\u2014billions of numbers that define how the AI thinks. These weights are stored in high-speed memory (like VRAM on a GPU or RAM on a CPU). When the model generates a single new word, it doesn\u2019t just use a few of these weights. It has to load the entire set of weights for that specific layer into the processor to perform the calculation.\n\nHere is the key issue: for a single user, the \"batch size\" is usually just one. This means the processor is doing a tiny amount of math (low FLOPs) but has to move a massive amount of data (high memory traffic) to do it. The ratio of math operations to data movement is very low. This is known as low arithmetic intensity.\n\nThink of it this way: if your processor can perform one trillion calculations per second, but it takes a full second to fetch the necessary data from memory, the processor sits idle 99.9% of the time, waiting for the data to arrive. The math engine is powerful, but it\u2019s starved for information.\n\nThis is why upgrading to a faster GPU with more FLOPs often doesn\u2019t speed up single-user inference much. If the memory bus is the same width and speed, the data still arrives at the same slow rate. The processor is just waiting longer between calculations.\n\nIn contrast, if you were running the model for thousands of users at once (a large batch), the processor could reuse the same loaded weights for many different inputs. This would increase the math-to-data ratio, making the FLOPs the limiting factor. But for a single person chatting with an AI, the system is constantly shuttling huge amounts of data back and forth just to do a little bit of math. Therefore, the speed at which data can be moved from memory to the processor (bandwidth) dictates how fast the AI can respond, not how fast the processor can crunch numbers.",
+    "math": "Here is the step-by-step solution to the problem.\n\n### 1. Identify Given Information\n\n*   **Distance between Station A and Station B ($D_{total}$):** $300 \\text{ km}$\n*   **Train 1 (from A):**\n    *   Departure time: $9:00$\n    *   Speed ($v_1$): $60 \\text{ km/h}$\n*   **Train 2 (from B):**\n    *   Departure time: $10:30$\n    *   Speed ($v_2$): $90 \\text{ km/h}$\n\n### 2. Calculate the Head Start of Train 1\n\nTrain 1 leaves at 9:00, and Train 2 leaves at 10:30. We need to calculate how far Train 1 travels before Train 2 starts moving.\n\n*   **Time difference ($\\Delta t$):**\n    $$10:30 - 9:00 = 1.5 \\text{ hours}$$\n\n*   **Distance covered by Train 1 during this time ($d_1$):**\n    $$d_1 = v_1 \\times \\Delta t$$\n    $$d_1 = 60 \\text{ km/h} \\times 1.5 \\text{ h}$$\n    $$d_1 = 90 \\text{ km}$$\n\nAt 10:30, Train 1 is $90 \\text{ km}$ away from Station A.\n\n### 3. Calculate the Remaining Distance\n\nAt 10:30, the two trains are moving toward each other. We need to find the distance remaining between them.\n\n*   **Remaining Distance ($D_{remaining}$):**\n    $$D_{remaining} = D_{total} - d_1$$\n    $$D_{remaining} = 300 \\text{ km} - 90 \\text{ km}$$\n    $$D_{remaining} = 210 \\text{ km}$$\n\n### 4. Calculate the Time to Meet\n\nNow, both trains are moving toward each other. We calculate the time it takes for them to cover the remaining $210 \\text{ km}$ using their combined speed.\n\n*   **Combined Speed ($v_{combined}$):**\n    $$v_{combined} = v",
+    "refactor": "```python\nfrom typing import Any, Dict\n\n\ndef p(d: Dict[str, Any]) -> Dict[str, str]:\n    \"\"\"\n    Filter and normalize a dictionary by removing entries with None or empty string values,\n    converting remaining values to stripped, lowercased strings, and sorting by key.\n\n    Args:\n        d: A dictionary with string keys and arbitrary values.\n\n    Returns:\n        A new dictionary with the same keys (sorted) and normalized string values,\n        excluding entries where the original value was None or an empty string.\n    \"\"\"\n    return {\n        k: str(d[k]).strip().lower()\n        for k in d\n        if d[k] is not None and d[k] != ''\n    }\n```\n\n## Explanation of Changes\n\n1. **Type hints added**:\n   - `d: Dict[str, Any]` \u2014 The input is a dictionary with string keys and values of any type.\n   - `-> Dict[str, str]` \u2014 The return type is a dictionary with string keys and string values.\n\n2. **Docstring added**:\n   - A clear docstring describes what the function does, its arguments, and its return value, following standard Python conventions.\n\n3. **Replaced the loop with a dictionary comprehension**:\n   - The original code used a `for` loop to build a list of tuples, then sorted it, then converted it to a dict. This is verbose and less idiomatic.\n   - A dictionary comprehension is more concise and Pythonic. It directly builds the resulting dictionary in one expression.\n\n4. **Removed the explicit sort**:\n   - The original code called `r.sort()` on the list of tuples before converting to a dict. However, in Python 3.7+, dictionaries preserve insertion order, but the original intent was to have keys sorted.\n   - **Important note**: The dictionary comprehension above does **not** sort the keys. To preserve the original behavior of sorting by key, we need to sort the keys first. Let me correct this:\n\n```python\nfrom typing import Any, Dict\n\n\ndef p(d: Dict[str, Any]) -> Dict[str, str]:\n    \"\"\"\n    Filter and normalize a dictionary by removing entries with None or empty string values,\n    converting remaining values to stripped, lowercased strings, and sorting by key.\n\n    Args:\n        d: A dictionary with string keys and arbitrary values.\n\n   "
+  },
+  "spec": {
+    "spec_active": true,
+    "num_drafts": 1860.0,
+    "draft_tokens": 5577.0,
+    "accepted_tokens": 4156.0,
+    "draft_len": 2.998,
+    "accept_rate": 0.7452,
+    "acceptance_length": 3.234
+  },
+  "decode_tps_mean_of_medians": 27.98,
+  "batch": {
+    "n": 8,
+    "wall": 62.73,
+    "total_tokens": 3976,
+    "aggregate_tps": 63.38,
+    "per_stream_tps": 7.92,
+    "spec": {
+      "spec_active": true,
+      "num_drafts": 1265.0,
+      "draft_tokens": 3787.0,
+      "accepted_tokens": 2707.0,
+      "draft_len": 2.994,
+      "accept_rate": 0.7148,
+      "acceptance_length": 3.14
+    }
+  },
+  "mem_gib": {
+    "total": 121.6,
+    "available": 90.2,
+    "used": 31.4
+  },
+  "kv": {}
+}

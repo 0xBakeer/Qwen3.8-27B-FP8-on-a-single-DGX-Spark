@@ -35,6 +35,30 @@ this hardware collapses as concurrency rises — +27 % at c1, +10 % at c8, and *
 c16**, where FP8 matches 4-bit exactly. If you serve a fleet, FP8 costs you nothing and
 carries no quantization quality question. See [RESULTS §3d](RESULTS.md#3d-the-quantization-advantage-disappears-under-concurrency).
 
+## DFlash 2 — a third drafter, and the fastest single-stream option
+
+Since this repo was written, Inco AI released [DFlash 2](https://inco.ai/blog/dflash2/),
+a drafter that predicts a whole block in one pass instead of one token at a time. Measured
+on the same device with a separate harness:
+
+| drafter | generative | edit-heavy | acceptance |
+|---|---:|---:|---:|
+| none | 7.94 | — | — |
+| MTP `k=3` | 17.99 | — | 3.165 |
+| DSpark `k=7` | 19.12 | — | 2.875 |
+| **DFlash2 `k=7`** | **31.72** | **49.20** | **4.607** |
+
+**3.99x over stock on generation, 1.66x over DSpark `k=7`.**
+
+Two things make this repo's checkpoint newly important: **FP8 is the only build of
+Qwen3.8-27B that can serve DFlash 2 under vLLM at all** — the drafter requires an
+unquantized LM head, which both 4-bit checkpoints fail — and the advantage is
+**single-stream only**. At c2 and above, 4-bit weights with free in-checkpoint MTP
+overtake it, by +23 % at c16.
+
+Full method, the c1-c16 curve, the LM-head constraint and its pre-flight check:
+**[DFLASH2.md](DFLASH2.md)**. References: [SOURCES.md](SOURCES.md).
+
 ## Hardware and software
 
 | | |

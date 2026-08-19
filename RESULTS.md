@@ -11,9 +11,12 @@ Two workloads, chosen because they sit at opposite ends of output predictability
 - **Fresh generation** — "write a Python module implementing an LRU cache with TTL
   expiry, thread safety, and a decorator API", 400 output tokens. Nothing useful in the
   prompt to copy from.
-- **Edit-heavy** — a ~2,000 token Python source file plus "add a method to every class,
-  output the complete modified file", 3,000 output tokens. Most of the output already
-  exists in the prompt.
+- **Edit-heavy** — a 6,387-token Python source file (45 dataclasses; measured against the
+  model's own tokenizer, not estimated) plus "add a method to every class, output the
+  complete modified file", 3,000 output tokens. Most of the output already exists in the
+  prompt. Note the output cap is **less than half the input**, so the run is truncated
+  partway through the file rather than completing it — it measures ~3,000 tokens of
+  near-continuous copying, which is the most speculation-friendly workload in this repo.
 
 Reported metrics: throughput (completion tokens ÷ wall clock), draft **acceptance rate**
 (accepted ÷ proposed draft tokens) and **mean tokens per forward pass** (`1 + accepted ÷

@@ -1,0 +1,4 @@
+endpoint http://127.0.0.1:8002/v1  model qwen3.8-27b
+   ~8K prompt   10260 tok |  10.95s =    936.7 tok/s prefill (slower run  10.96s =    936.3 tok/s)
+  ~32K prompt   42584 tok |  50.41s =    844.8 tok/s prefill (slower run  50.48s =    843.6 tok/s)
+ ~100K prompt  136624 tok | 197.90s =    690.4 tok/s prefill (slower run 197.92s =    690.3 tok/s)

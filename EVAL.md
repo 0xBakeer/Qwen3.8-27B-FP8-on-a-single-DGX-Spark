@@ -170,6 +170,38 @@ evaluation.
   the standard account of this behaviour and is consistent with every observation
   here, but it was not proven by instrumenting the kernels.
 
+## Update: the quality question, answered
+
+The section above says a byte-diff cannot tell you whether output got better or worse, and
+that answering it "needs a scored benchmark run under both configurations and compared on
+accuracy". That has since been run.
+
+| configuration | GSM8K (n=200) | MMLU (n=400) |
+|---|---:|---:|
+| FP8, no speculation | 93.5% | 84.0% |
+| FP8 + DFlash 2 `k=7` | 92.5% | 84.0% |
+| int4 AutoRound, no speculation | 94.0% | 82.0% |
+
+Greedy, thinking disabled. Every difference sits inside its confidence interval
+(+/-3.3 pp on GSM8K, +/-3.7 pp on MMLU at 95 %), so **none of them is established as real**.
+
+Aggregate scores are weak evidence — two runs can score identically while disagreeing on many
+individual items — so per-item agreement is the sharper test:
+
+| comparison | GSM8K | MMLU |
+|---|---:|---:|
+| DFlash 2 vs no speculation | 94.0 % | **99.8 %** |
+| FP8 vs int4 (both unspeculated) | 93.5 % | 96.2 % |
+
+**Speculation perturbs the output less than changing precision does.** DFlash 2 agrees with
+unspeculated decoding on 399 of 400 MMLU items; FP8 and int4 agree on 385. That is consistent
+with the mechanism this document already describes: the drafter never overrules the model, and
+the residual divergence is floating-point reduction order flipping the argmax on near-ties.
+
+Still not established: this used a 200/400-item sample, enough to exclude a large regression
+but not to resolve the 2 pp MMLU gap between FP8 and int4 (that needs ~2,000 items). And it
+covers two tasks, not the space of things people use the model for.
+
 ## Reproducing
 
 ```bash

@@ -1,0 +1,5 @@
+endpoint http://127.0.0.1:8002/v1  model qwen3.8-27b
+warmup              32 tok /    1.6s =  19.90 tok/s | accept  66.7% | mean 5.67 tok/pass
+fresh-code         400 tok /   13.4s =  29.86 tok/s | accept  54.9% | mean 4.84 tok/pass
+EDIT-heavy        3000 tok /   69.1s =  43.40 tok/s | accept  99.6% | mean 7.97 tok/pass
+EDIT-heavy #2     3000 tok /   64.5s =  46.51 tok/s | accept  99.6% | mean 7.97 tok/pass

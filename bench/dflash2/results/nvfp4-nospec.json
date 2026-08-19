@@ -1,0 +1,135 @@
+{
+  "tag": "nvfp4-nospec",
+  "model": "qwen3.8-27b",
+  "temp": 0.0,
+  "max_tokens": 512,
+  "think": false,
+  "ts": "2026-08-19T09:31:27",
+  "single": {
+    "code": {
+      "runs": [
+        {
+          "ttft": 0.1977,
+          "wall": 45.607,
+          "tokens": 512,
+          "decode_tps": 11.28
+        },
+        {
+          "ttft": 0.1397,
+          "wall": 45.536,
+          "tokens": 512,
+          "decode_tps": 11.28
+        },
+        {
+          "ttft": 0.1257,
+          "wall": 45.528,
+          "tokens": 512,
+          "decode_tps": 11.28
+        }
+      ],
+      "decode_tps_median": 11.28,
+      "ttft_median": 0.1397
+    },
+    "prose": {
+      "runs": [
+        {
+          "ttft": 0.1459,
+          "wall": 39.315,
+          "tokens": 442,
+          "decode_tps": 11.28
+        },
+        {
+          "ttft": 0.2041,
+          "wall": 39.93,
+          "tokens": 442,
+          "decode_tps": 11.13
+        },
+        {
+          "ttft": 0.2137,
+          "wall": 39.89,
+          "tokens": 442,
+          "decode_tps": 11.14
+        }
+      ],
+      "decode_tps_median": 11.14,
+      "ttft_median": 0.2041
+    },
+    "math": {
+      "runs": [
+        {
+          "ttft": 0.2078,
+          "wall": 45.608,
+          "tokens": 512,
+          "decode_tps": 11.28
+        },
+        {
+          "ttft": 0.1265,
+          "wall": 45.527,
+          "tokens": 512,
+          "decode_tps": 11.28
+        },
+        {
+          "ttft": 0.1208,
+          "wall": 45.527,
+          "tokens": 512,
+          "decode_tps": 11.28
+        }
+      ],
+      "decode_tps_median": 11.28,
+      "ttft_median": 0.1265
+    },
+    "refactor": {
+      "runs": [
+        {
+          "ttft": 0.1652,
+          "wall": 45.555,
+          "tokens": 512,
+          "decode_tps": 11.28
+        },
+        {
+          "ttft": 0.1317,
+          "wall": 45.54,
+          "tokens": 512,
+          "decode_tps": 11.28
+        },
+        {
+          "ttft": 0.1268,
+          "wall": 45.528,
+          "tokens": 512,
+          "decode_tps": 11.28
+        }
+      ],
+      "decode_tps_median": 11.28,
+      "ttft_median": 0.1317
+    }
+  },
+  "samples": {
+    "code": "```go\npackage main\n\nimport (\n\t\"sort\"\n\t\"testing\"\n)\n\n// MergeIntervals takes a slice of intervals (each interval is a two-element\n// slice [start, end]) and merges all overlapping intervals, returning the\n// merged result in sorted order by start time.\nfunc MergeIntervals(in [][]int) [][]int {\n\tif len(in) == 0 {\n\t\treturn nil\n\t}\n\n\t// Sort intervals by start time\n\tsort.Slice(in, func(i, j int) bool {\n\t\treturn in[i][0] < in[j][0]\n\t})\n\n\tmerged := make([][]int, 0, len(in))\n\tmerged = append(merged, in[0])\n\n\tfor i := 1; i < len(in); i++ {\n\t\tlast := merged[len(merged)-1]\n\t\tcur := in[i]\n\n\t\tif cur[0] <= last[1] {\n\t\t\t// Overlapping: extend the end if needed\n\t\t\tif cur[1] > last[1] {\n\t\t\t\tlast[1] = cur[1]\n\t\t\t}\n\t\t} else {\n\t\t\t// No overlap: add new interval\n\t\t\tmerged = append(merged, cur)\n\t\t}\n\t}\n\n\treturn merged\n}\n\nfunc TestMergeIntervals(t *testing.T) {\n\ttests := []struct {\n\t\tname     string\n\t\tinput    [][]int\n\t\texpected [][]int\n\t}{\n\t\t{\n\t\t\tname:     \"no intervals\",\n\t\t\tinput:    [][]int{},\n\t\t\texpected: nil,\n\t\t},\n\t\t{\n\t\t\tname:     \"single interval\",\n\t\t\tinput:    [][]int{{1, 3}},\n\t\t\texpected: [][]int{{1, 3}},\n\t\t},\n\t\t{\n\t\t\tname:     \"overlapping intervals\",\n\t\t\tinput:    [][]int{{1, 3}, {2, 6}, {8, 10}, {15, 18}},\n\t\t\texpected: [][]int{{1, 6}, {8, 10}, {15, 18}},\n\t\t},\n\t\t{\n\t\t\tname:     \"contained interval\",\n\t\t\tinput:    [][]int{{1, 4}, {2, 3}, {5, 6}},\n\t\t\texpected:",
+    "prose": "When you run a large language model on a single computer, the bottleneck is rarely the speed at which the processor can perform math calculations (FLOPs). Instead, it is almost always the speed at which data can be moved between the processor and the main memory (bandwidth). This happens because of how these models are structured and how they process information.\n\nLarge language models are \"dense,\" meaning every single word you type requires the computer to look at every single parameter in the model to generate the next word. These parameters are essentially a massive list of numbers stored in the computer\u2019s RAM or VRAM. To generate just one new word, the processor must read the entire model from memory, perform a series of multiplications and additions, and then write the result back.\n\nHere is the key distinction: modern processors are incredibly fast at doing math. They can perform billions of calculations per second. However, the \"pipe\" that carries data from memory to the processor is much narrower and slower. Imagine the processor is a super-fast chef who can chop vegetables in seconds, but the delivery truck bringing the ingredients (the data) takes ten minutes to arrive. The chef spends most of their time waiting for the truck, not chopping.\n\nIn technical terms, this is known as low \"arithmetic intensity.\" For a single user generating text one word at a time, the ratio of calculations performed to the amount of data moved is very low. The processor is mostly idle, waiting for the next chunk of model weights to arrive from memory. Even if you had a processor that was twice as fast at math, it wouldn\u2019t help much if the memory bus remained the same speed, because the processor would still be starved for data.\n\nThis is why upgrading your memory speed (like moving from DDR4 to DDR5, or using high-bandwidth HBM in GPUs) often yields better performance gains for single-user inference than upgrading the raw compute power of the CPU or GPU. The system is constrained by how quickly it can feed the model\u2019s weights to the calculation engine, not by how quickly the engine can crunch them. Therefore, memory bandwidth is the critical limit for single-user, dense model inference.",
+    "math": "Here is the step-by-step solution to determine when and where the two trains meet.\n\n### 1. Identify the Given Information\n\n*   **Train A:**\n    *   Departure Time: $9:00$\n    *   Speed ($v_A$): $60 \\text{ km/h}$\n    *   Starting Position: Station A (Distance $= 0 \\text{ km}$)\n*   **Train B:**\n    *   Departure Time: $10:30$\n    *   Speed ($v_B$): $90 \\text{ km/h}$\n    *   Starting Position: Station B (Distance $= 300 \\text{ km}$ from A)\n*   **Total Distance:** $300 \\text{ km}$\n\n### 2. Determine the Time Gap\n\nFirst, we calculate how much time Train A travels before Train B starts.\n\n*   Train A leaves at $9:00$.\n*   Train B leaves at $10:30$.\n*   Time difference $= 1.5 \\text{ hours}$ (or $1 \\text{ hour } 30 \\text{ minutes}$).\n\n### 3. Calculate Distance Covered by Train A Before Train B Starts\n\nDuring this 1.5-hour head start, Train A covers a certain distance.\n\n$$\n\\text{Distance}_A (\\text{head start}) = v_A \\times t_{\\text{gap}}\n$$\n\n$$\n\\text{Distance}_A (\\text{head start}) = 60 \\text{ km/h} \\times 1.5 \\text{ h}\n$$\n\n$$\n\\text{Distance}_A (\\text{head start}) = 90 \\text{ km}\n$$\n\nSo, at $10:30$, Train A is $90 \\text{ km}$ away from Station A.\n\n### 4. Calculate the Remaining Distance Between the Trains\n\nAt $10:30$, Train B is at Station B ($300 \\text{ km}$ mark), and Train A is at the $90 \\text{ km}$ mark. We need to find the distance between them at this specific moment.\n\n$$\n\\text{Remaining Distance} = \\text{Total Distance} - \\text{Distance}_A (\\text{head start})\n$$\n\n$$\n\\text",
+    "refactor": "```python\nfrom typing import Any, Dict\n\n\ndef p(d: Dict[str, Any]) -> Dict[str, str]:\n    \"\"\"\n    Filter and normalize a dictionary.\n\n    This function takes a dictionary and returns a new dictionary containing\n    only the key-value pairs where the value is not None and not an empty string.\n    Each value is converted to a string, stripped of leading/trailing whitespace,\n    and lowercased. The resulting dictionary is sorted by key.\n\n    Args:\n        d: A dictionary with string keys and arbitrary values.\n\n    Returns:\n        A new dictionary with string keys and normalized string values,\n        sorted by key.\n    \"\"\"\n    return {\n        k: str(d[k]).strip().lower()\n        for k in d\n        if d[k] is not None and d[k] != \"\"\n    }\n```\n\n### Explanation of Changes\n\n1. **Type Hints**:\n   - Added `Dict[str, Any]` as the parameter type to indicate that `d` is a dictionary with string keys and values of any type.\n   - Added `Dict[str, str]` as the return type to indicate that the function returns a dictionary with string keys and string values.\n   - Imported `Any` and `Dict` from the `typing` module.\n\n2. **Docstring**:\n   - Added a comprehensive docstring that describes the function's purpose, arguments, and return value. This improves readability and serves as documentation for users of the function.\n\n3. **Idiomatic Dictionary Comprehension**:\n   - Replaced the manual loop with a dictionary comprehension, which is more concise and Pythonic.\n   - The comprehension `{k: str(d[k]).strip().lower() for k in d if d[k] is not None and d[k] != \"\"}` achieves the same result as the original loop but in a single, readable expression.\n\n4. **`is not None` Instead of `!= None`**:\n   - Changed `d[k] != None` to `d[k] is not None`. Using `is not None` is the idiomatic way to check for `None` in Python because it checks identity rather than equality, which is more precise and avoids potential issues with objects that override `__eq__`.\n\n5. **Removed Unnecessary Sorting**:\n   - The original code explicitly sorted the list of tuples with `r.sort()` before converting to a"
+  },
+  "spec": {
+    "spec_active": false
+  },
+  "decode_tps_mean_of_medians": 11.24,
+  "batch": {
+    "n": 8,
+    "wall": 50.88,
+    "total_tokens": 3949,
+    "aggregate_tps": 77.61,
+    "per_stream_tps": 9.7,
+    "spec": {
+      "spec_active": false
+    }
+  },
+  "mem_gib": {
+    "total": 121.6,
+    "available": 19.9,
+    "used": 101.8
+  },
+  "kv": {
+    "vllm:kv_cache_usage_perc{engine=\"0\",model_name=\"qwen3.8-27b\"}": 0.0,
+    "vllm:cache_config_info{_block_size_resolved=\"True\",block_size=\"1568\",cache_dtype=\"auto\",calculate_kv_scales=\"False\",enable_prefix_caching=\"True\",engine=\"0\",gpu_memory_utilization=\"0.8\",is_attention_free=\"False\",kv_cache_dtype_skip_layers=\"[]\",kv_cache_max_concurrency=\"15.733333333333333\",kv_cache_memory_bytes=\"None\",kv_cache_size_tokens=\"2062199\",kv_offloading_backend=\"native\",kv_offloading_size=\"None\",kv_sharing_fast_prefill=\"False\",mamba_block_size=\"16\",mamba_cache_dtype=\"auto\",mamba_cache_mode=\"align\",mamba_page_size_padded=\"None\",mamba_ssm_cache_dtype=\"float32\",num_cpu_blocks=\"None\",num_gpu_blocks=\"1416\",num_gpu_blocks_override=\"None\",prefix_caching_hash_algo=\"sha256\",prefix_match_unit=\"None\",replayssm_buffer_len=\"16\",skip_page_size_padded=\"None\",sliding_window=\"None\",use_replayssm=\"False\",user_specified_block_size=\"False\",user_specified_mamba_block_size=\"False\"}": 1.0
+  }
+}

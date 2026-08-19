@@ -1,0 +1,147 @@
+{
+  "tag": "nvfp4-dspark7",
+  "model": "qwen3.8-27b",
+  "temp": 0.0,
+  "max_tokens": 512,
+  "think": false,
+  "ts": "2026-08-19T09:51:42",
+  "single": {
+    "code": {
+      "runs": [
+        {
+          "ttft": 0.3384,
+          "wall": 19.027,
+          "tokens": 512,
+          "decode_tps": 27.4
+        },
+        {
+          "ttft": 0.2825,
+          "wall": 18.836,
+          "tokens": 512,
+          "decode_tps": 27.6
+        },
+        {
+          "ttft": 0.2524,
+          "wall": 18.28,
+          "tokens": 512,
+          "decode_tps": 28.4
+        }
+      ],
+      "decode_tps_median": 27.6,
+      "ttft_median": 0.2825
+    },
+    "prose": {
+      "runs": [
+        {
+          "ttft": 0.2774,
+          "wall": 25.242,
+          "tokens": 404,
+          "decode_tps": 16.18
+        },
+        {
+          "ttft": 0.2503,
+          "wall": 25.27,
+          "tokens": 404,
+          "decode_tps": 16.15
+        },
+        {
+          "ttft": 0.2517,
+          "wall": 25.533,
+          "tokens": 404,
+          "decode_tps": 15.98
+        }
+      ],
+      "decode_tps_median": 16.15,
+      "ttft_median": 0.2517
+    },
+    "math": {
+      "runs": [
+        {
+          "ttft": 0.2568,
+          "wall": 18.429,
+          "tokens": 512,
+          "decode_tps": 28.18
+        },
+        {
+          "ttft": 0.2552,
+          "wall": 18.324,
+          "tokens": 512,
+          "decode_tps": 28.34
+        },
+        {
+          "ttft": 0.2548,
+          "wall": 18.278,
+          "tokens": 512,
+          "decode_tps": 28.41
+        }
+      ],
+      "decode_tps_median": 28.34,
+      "ttft_median": 0.2552
+    },
+    "refactor": {
+      "runs": [
+        {
+          "ttft": 0.2585,
+          "wall": 20.024,
+          "tokens": 512,
+          "decode_tps": 25.9
+        },
+        {
+          "ttft": 0.2594,
+          "wall": 19.926,
+          "tokens": 512,
+          "decode_tps": 26.03
+        },
+        {
+          "ttft": 0.3708,
+          "wall": 20.164,
+          "tokens": 512,
+          "decode_tps": 25.87
+        }
+      ],
+      "decode_tps_median": 25.9,
+      "ttft_median": 0.2594
+    }
+  },
+  "samples": {
+    "code": "```go\npackage main\n\nimport (\n\t\"sort\"\n\t\"testing\"\n)\n\n// MergeIntervals takes a slice of intervals and merges all overlapping intervals.\n// Each interval is represented as a two-element slice [start, end].\n// The input is sorted by start time before merging.\nfunc MergeIntervals(in [][]int) [][]int {\n\tif len(in) == 0 {\n\t\treturn nil\n\t}\n\n\t// Sort intervals by start time\n\tsort.Slice(in, func(i, j int) bool {\n\t\treturn in[i][0] < in[j][0]\n\t})\n\n\t// Initialize result with the first interval\n\tresult := [][]int{in[0]}\n\n\t// Iterate through the remaining intervals\n\tfor i := 1; i < len(in); i++ {\n\t\tlast := result[len(result)-1]\n\t\tcurrent := in[i]\n\n\t\t// If the current interval overlaps with the last merged interval,\n\t\t// merge them by extending the end if necessary\n\t\tif current[0] <= last[1] {\n\t\t\tif current[1] > last[1] {\n\t\t\t\tlast[1] = current[1]\n\t\t\t}\n\t\t} else {\n\t\t\t// No overlap, add the current interval as a new merged interval\n\t\t\tresult = append(result, current)\n\t\t}\n\t}\n\n\treturn result\n}\n\nfunc TestMergeIntervals(t *testing.T) {\n\ttests := []struct {\n\t\tname     string\n\t\tinput    [][]int\n\t\texpected [][]int\n\t}{\n\t\t{\n\t\t\tname:     \"overlapping intervals\",\n\t\t\tinput:    [][]int{{1, 3}, {2, 6}, {8, 10}, {15, 18}},\n\t\t\texpected: [][]int{{1, 6}, {8, 10}, {15, 18}},\n\t\t},\n\t\t{\n\t\t\tname:     \"no overlap\",\n\t\t\tinput:    [][]int{{1, 2}, {3, 4}, {5, 6}},\n\t\t\texpected: [][]int{{1, 2}, {3, 4}, {5, 6}},\n\t\t},\n\t\t{\n\t\t\tname:     \"single interval\",\n\t\t\tinput:    [][]int{{1, 5}},\n\t\t\texpected: [][]",
+    "prose": "When you run a large language model on a single computer, the bottleneck is usually not how fast the processor can do math, but how fast it can move data. This is known as the memory bandwidth limit.\n\nTo understand why, consider what happens when the model generates a single new word. The model has billions of parameters (weights). To calculate the next word, the computer must load all those weights from the main memory (RAM or VRAM) into the processor\u2019s fast, temporary cache. Once the weights are loaded, the processor performs a massive amount of multiplication and addition operations.\n\nHere is the key issue: for a single user, the \"batch size\" is effectively one. This means the processor is doing a huge amount of work for every single piece of data it moves. In technical terms, this results in a low \"arithmetic intensity.\" The processor spends most of its time waiting for data to arrive from memory, rather than actually calculating. It is like a chef who has a super-fast knife (high FLOPs) but can only get one ingredient at a time from a slow pantry (low memory bandwidth). The chef spends 90% of the time walking to the pantry and only 10% of the time chopping.\n\nIf you were running the model for thousands of users at once (a large batch), the processor could reuse the same loaded weights for many different inputs. This would increase the amount of math done per byte of data moved, making the processor the bottleneck instead. But for a single user, that reuse doesn\u2019t happen.\n\nTherefore, even if you have a processor capable of trillions of calculations per second, if it can only pull data from memory at a certain speed, the total speed of the model is capped by that memory transfer rate. Upgrading to a faster processor won\u2019t help much if the memory bus is too slow. This is why, for single-user inference, memory bandwidth is the critical factor determining how fast the model can respond.",
+    "math": "Here is the step-by-step solution to determine when and where the two trains meet.\n\n### Step 1: Determine the time gap and initial distance covered\n\nFirst, we calculate how much time the first train travels before the second train starts.\n\n*   **Train 1 Departure:** 9:00\n*   **Train 2 Departure:** 10:30\n*   **Time Difference:** $10:30 - 9:00 = 1.5$ hours\n\nDuring this 1.5-hour head start, Train 1 covers a certain distance.\n*   **Speed of Train 1 ($v_1$):** $60$ km/h\n*   **Distance covered by Train 1 ($d_1$):**\n    $$d_1 = v_1 \\times t = 60 \\text{ km/h} \\times 1.5 \\text{ h} = 90 \\text{ km}$$\n\nSo, at 10:30, Train 1 is 90 km away from Station A.\n\n### Step 2: Calculate the remaining distance between the trains\n\nThe total distance between Station A and Station B is 300 km. Since Train 1 has already traveled 90 km, we calculate the remaining distance between the two trains at 10:30.\n\n*   **Total Distance ($D$):** $300$ km\n*   **Distance already covered by Train 1:** $90$ km\n*   **Remaining Distance ($d_{rem}$):**\n    $$d_{rem} = 300 \\text{ km} - 90 \\text{ km} = 210 \\text{ km}$$\n\nAt 10:30, the two trains are 210 km apart and are moving toward each other.\n\n### Step 3: Calculate the time it takes for them to meet\n\nNow, both trains are moving simultaneously toward each other. We need to find the time ($t$) it takes for them to cover the remaining 210 km.\n\n*   **Speed of Train 1 ($v_1$):** $60$ km/h\n*   **Speed of Train 2 ($v_2$):** $90$ km/h\n*   **Combined Speed ($v_{combined}$):**\n    $$v_{combined} = v_",
+    "refactor": "```python\nfrom typing import Any, Dict\n\n\ndef p(d: Dict[str, Any]) -> Dict[str, str]:\n    \"\"\"\n    Filter and normalize a dictionary.\n\n    Removes entries whose values are None or empty strings,\n    then converts the remaining values to lowercase, stripped strings.\n    The resulting dictionary is sorted by key.\n\n    Args:\n        d: A dictionary with string keys and arbitrary values.\n\n    Returns:\n        A new dictionary with filtered, normalized, and sorted entries.\n    \"\"\"\n    return {\n        k: str(v).strip().lower()\n        for k, v in d.items()\n        if v is not None and v != ''\n    }\n```\n\n### Explanation of Changes\n\n1. **Type Hints Added**:\n   - `d: Dict[str, Any]` \u2014 The input is a dictionary with string keys and values of any type.\n   - `-> Dict[str, str]` \u2014 The return type is a dictionary with string keys and string values.\n   - This makes the function's contract explicit and enables static analysis tools to catch misuse.\n\n2. **Docstring Added**:\n   - A clear docstring describes what the function does, its arguments, and its return value. This improves readability and discoverability.\n\n3. **Replaced Manual Loop with Dictionary Comprehension**:\n   - The original code used a `for` loop to build a list of tuples, then sorted it, then converted to a dict.\n   - The rewritten version uses a **dictionary comprehension**, which is more concise and idiomatic Python.\n   - Note: In Python 3.7+, dictionaries preserve insertion order, and `dict` comprehensions naturally produce a dict. However, the original code explicitly sorted the keys. To preserve that behavior, we should sort the keys. Let me correct this:\n\n   Actually, the original code sorts the resulting dictionary by key. A plain dict comprehension does **not** sort keys. To maintain identical behavior, we need to sort. Here's the corrected version:\n\n```python\nfrom typing import Any, Dict\n\n\ndef p(d: Dict[str, Any]) -> Dict[str, str]:\n    \"\"\"\n    Filter and normalize a dictionary.\n\n    Removes entries whose values are None or empty strings,\n    then converts the remaining values to lowercase, stripped strings.\n    The resulting dictionary is sorted by key.\n\n    Args:\n        d: A dictionary"
+  },
+  "spec": {
+    "spec_active": true,
+    "num_drafts": 1986.0,
+    "draft_tokens": 13902.0,
+    "accepted_tokens": 3855.0,
+    "draft_len": 7.0,
+    "accept_rate": 0.2773,
+    "acceptance_length": 2.941
+  },
+  "decode_tps_mean_of_medians": 24.5,
+  "batch": {
+    "n": 8,
+    "wall": 40.38,
+    "total_tokens": 3959,
+    "aggregate_tps": 98.04,
+    "per_stream_tps": 12.26,
+    "spec": {
+      "spec_active": true,
+      "num_drafts": 1327.0,
+      "draft_tokens": 9289.0,
+      "accepted_tokens": 2632.0,
+      "draft_len": 7.0,
+      "accept_rate": 0.2833,
+      "acceptance_length": 2.983
+    }
+  },
+  "mem_gib": {
+    "total": 121.6,
+    "available": 11.8,
+    "used": 109.8
+  },
+  "kv": {
+    "vllm:kv_cache_usage_perc{engine=\"0\",model_name=\"qwen3.8-27b\"}": 0.0,
+    "vllm:cache_config_info{_block_size_resolved=\"True\",block_size=\"1648\",cache_dtype=\"auto\",calculate_kv_scales=\"False\",enable_prefix_caching=\"True\",engine=\"0\",gpu_memory_utilization=\"0.8\",is_attention_free=\"False\",kv_cache_dtype_skip_layers=\"[]\",kv_cache_max_concurrency=\"8.651020408163266\",kv_cache_memory_bytes=\"None\",kv_cache_size_tokens=\"1133906\",kv_offloading_backend=\"native\",kv_offloading_size=\"None\",kv_sharing_fast_prefill=\"False\",mamba_block_size=\"16\",mamba_cache_dtype=\"auto\",mamba_cache_mode=\"align\",mamba_page_size_padded=\"None\",mamba_ssm_cache_dtype=\"float32\",num_cpu_blocks=\"None\",num_gpu_blocks=\"4239\",num_gpu_blocks_override=\"None\",prefix_caching_hash_algo=\"sha256\",prefix_match_unit=\"None\",replayssm_buffer_len=\"16\",skip_page_size_padded=\"None\",sliding_window=\"None\",use_replayssm=\"False\",user_specified_block_size=\"False\",user_specified_mamba_block_size=\"False\"}": 1.0
+  }
+}

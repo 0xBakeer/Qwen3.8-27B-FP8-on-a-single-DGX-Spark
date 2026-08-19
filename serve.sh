@@ -13,6 +13,10 @@ set -euo pipefail
 
 MODEL="${MODEL:-Qwen/Qwen3.8-27B-FP8}"
 DRAFTER="${DRAFTER:-Doopeworld/Qwen3.8-27B-DSpark-vLLM}"
+DFLASH_DRAFTER="${DFLASH_DRAFTER:-incoai/Qwen3.8-27B-DFlash2}"
+# Overlay dir holding the patched vLLM sources for SPEC=dflash (see
+# bench/dflash2/vllm-patch/apply.py). Ignored for every other SPEC.
+D2_PATCH="${D2_PATCH:-$HOME/dflash2-patch/patched/vllm}"
 IMAGE="${IMAGE:-vllm/vllm-openai:v0.27.1-aarch64}"
 NAME="${NAME:-qwen38}"
 PORT="${PORT:-8002}"
@@ -37,8 +41,12 @@ K="${K:-7}"
 case "$SPEC" in
   dspark) SPEC_CFG="{\"method\":\"dspark\",\"model\":\"$DRAFTER\",\"num_speculative_tokens\":$K,\"draft_sample_method\":\"probabilistic\"}" ;;
   mtp)    SPEC_CFG="{\"method\":\"mtp\",\"num_speculative_tokens\":$K}" ;;
+  # DFlash2 (Inco AI, PR 52816). Requires an UNQUANTIZED target LM head, so it runs on
+  # the FP8 checkpoint and fails on both 4-bit builds - see DFLASH2.md. k is capped at 7
+  # by the drafter's block_size 8. Needs the Python overlay in bench/dflash2/vllm-patch.
+  dflash) SPEC_CFG="{\"method\":\"dflash\",\"model\":\"$DFLASH_DRAFTER\",\"num_speculative_tokens\":$K}" ;;
   off)    SPEC_CFG="" ;;
-  *)      echo "SPEC must be one of: dspark, mtp, off" >&2; exit 2 ;;
+  *)      echo "SPEC must be one of: dspark, mtp, dflash, off" >&2; exit 2 ;;
 esac
 
 mkdir -p "$HF_CACHE" "$VLLM_CACHE"
@@ -65,10 +73,31 @@ ARGS=(
 
 echo "starting $NAME :: $MODEL :: spec=$SPEC k=$K gmu=$GMU"
 
+# SPEC=dflash needs vLLM PR 52816. It is pure Python, so the changed files are bind-mounted
+# over the stock image rather than rebuilding it. Run bench/dflash2/vllm-patch/apply.py first.
+D2MOUNTS=()
+if [ "$SPEC" = "dflash" ]; then
+  if [ ! -d "$D2_PATCH" ]; then
+    echo "SPEC=dflash needs the patched sources at $D2_PATCH" >&2
+    echo "run: python3 bench/dflash2/vllm-patch/apply.py" >&2
+    exit 2
+  fi
+  SP=/usr/local/lib/python3.12/dist-packages/vllm
+  D2MOUNTS=(
+    -v "$D2_PATCH/config/vllm.py:$SP/config/vllm.py:ro"
+    -v "$D2_PATCH/model_executor/models/qwen3_dflash.py:$SP/model_executor/models/qwen3_dflash.py:ro"
+    -v "$D2_PATCH/model_executor/models/qwen3_dflash2.py:$SP/model_executor/models/qwen3_dflash2.py:ro"
+    -v "$D2_PATCH/model_executor/models/registry.py:$SP/model_executor/models/registry.py:ro"
+    -v "$D2_PATCH/v1/worker/gpu/spec_decode/__init__.py:$SP/v1/worker/gpu/spec_decode/__init__.py:ro"
+    -v "$D2_PATCH/v1/worker/gpu/spec_decode/dflash2:$SP/v1/worker/gpu/spec_decode/dflash2:ro"
+  )
+fi
+
 docker run -d --name "$NAME" --gpus all --ipc host \
   -p "127.0.0.1:$PORT:$PORT" \
   -v "$HF_CACHE":/root/.cache/huggingface \
   -v "$VLLM_CACHE":/root/.cache/vllm \
+  "${D2MOUNTS[@]}" \
   --entrypoint vllm "$IMAGE" "${ARGS[@]}" >/dev/null
 
 # Cold start is several minutes: weights, optional drafter, torch.compile and kernel
